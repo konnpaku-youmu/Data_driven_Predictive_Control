@@ -37,6 +37,18 @@ def discretize_dynamics(A: np.ndarray, B: np.ndarray, Ts: int) -> Tuple[np.ndarr
 
     return Ad, Bd
 
+def ricatti_recursion(A: np.ndarray, B: np.ndarray, Q: np.ndarray, R: np.ndarray, P_f: np.ndarray, N: int):
+    P = [P_f]
+    K = []
+
+    for _ in range(N):
+        K_k = -inv(R + B.T @ P[-1] @ B) @ B.T @ P[-1] @ A
+        P_k = Q + A.T @ P[-1] @ A + A.T @ P[-1] @ B @ K_k
+        K.append(K_k)
+        P.append(P_k)
+    
+    return P[::-1], K[::-1]
+
 
 def main():
     A, B = get_system_dynamics()
@@ -63,7 +75,12 @@ def main():
     Q = np.diag([0.5, 2, 0.1, 0.1])
     R = 0.05
 
-    
+    x0 = np.array([[1], [0], [0], [0]])
+    for i in range(200):
 
+        _, gains = ricatti_recursion(Ad, Bd, Q, R, Q, 10)
+
+    
+    
 if __name__ == "__main__":
     main()
