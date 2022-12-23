@@ -53,6 +53,8 @@ def ricatti_recursion(A: np.ndarray, B: np.ndarray, Q: np.ndarray, R: np.ndarray
 def main():
     A, B = get_system_dynamics()
 
+    print(B.shape)
+
     T_s = 0.05
     Ad, Bd = discretize_dynamics(A, B, T_s)
 
