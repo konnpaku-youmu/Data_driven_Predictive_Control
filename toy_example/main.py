@@ -7,15 +7,9 @@ from casadi import *
 from casadi.tools import *
 from typing import Tuple
 
-# Random seed:
-np.random.seed(1)
+# # Random seed:
+# np.random.seed(1)
 
-# Customizing Matplotlib:
-mpl.rcParams['font.size'] = 14
-mpl.rcParams['lines.linewidth'] = 1
-mpl.rcParams['svg.fonttype'] = 'none'
-mpl.rcParams['axes.unicode_minus'] = 'true'
-mpl.rcParams['axes.labelpad'] = 6
 
 plt.rcParams.update({
     "text.usetex": True,
@@ -35,7 +29,7 @@ x0 = np.array([[0.3], [0.2]])
 
 sys = System(Ad, Bd, C, D, x0)
 
-def random_u(u0, switch_prob=0.5, u_max=0.1):
+def random_u(u0, switch_prob=0.4, u_max=0.1):
     # Hold the current value with switch_prob chance or switch to new random value.
     u_next = (0.5-np.random.rand(u0.shape[0], 1))*u_max  # New candidate value.
     switch = np.random.rand() >= (1-switch_prob)  # switching? 0 or 1.
@@ -52,7 +46,7 @@ for k in range(200):
         u0 = np.zeros((Bd.shape[1], 1))
     sys.make_step(u0)
 
-plt.figure(figsize=(10, 6))
+plt.figure(figsize=(6, 4))
 plt.subplot(121)
 plt.plot(sys.time, sys.y)
 plt.legend(["dh1", "dh2"])
@@ -145,7 +139,7 @@ nlp = {'x': opt_x_dpc, 'f': obj, 'g': cons, 'p': opt_p_dpc}
 S_dpc = nlpsol('S', 'ipopt', nlp)
 
 
-np.random.seed(10)
+# np.random.seed(10)
 x0 = np.array([[-0.1], [-0.2]])
 sys.reset(x0)
 
@@ -182,12 +176,12 @@ y_N_dpc = horzcat(*opt_x_num_dpc['y_N']).full().T
 fig, ax = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
 
 t = np.arange(N)*0.1
-y_dpc_lines = ax[0].plot(t, y_N_dpc, linewidth=1)
+y_dpc_lines = ax[0].plot(t, y_N_dpc, linewidth=2)
 ax[0].legend([r"$\Delta h_1$", r"$\Delta h_2$"])
 ax[0].set_ylabel('Water level')
 ax[0].set_prop_cycle(None)
 
-u_dpc_lines = ax[1].step(t, u_N_dpc, linewidth=1)
+u_dpc_lines = ax[1].step(t, u_N_dpc, linewidth=2)
 ax[1].legend([r"$\Delta q_1$", r"$\Delta q_2$"])
 ax[1].set_ylabel('Water flow')
 ax[1].set_prop_cycle(None)
