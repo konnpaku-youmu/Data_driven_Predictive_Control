@@ -1,29 +1,33 @@
 import numpy as np
 
 from System import SimpleHarmonic, InvertedPendulum
-from Controller import LQRController, OpenLoop
+from Controller import LQRController, OpenLoop, SetpointGenerator, DeePC
 
 import matplotlib.pyplot as plt
 
 
 def main():
 
-    # model = SimpleHarmonic(k=1, mass=1, Ts=0.05)
-    model = InvertedPendulum(Ts = 0.05)
-    x0 = np.array([[0.2], [0.3], [0.], [0.]])
-    n_steps = 200
+    model = InvertedPendulum(Ts=0.05)
+    x0 = np.array([[0.1], [0.], [0.], [0.]])
+    n_steps = 100
 
-    target = np.zeros([n_steps, x0.shape[0], x0.shape[1]])
-    target[:100, 0, 0] = np.ones(100)
+    Q = np.array([[1.5, 0, 0, 0],
+                  [0, 10, 0, 0],
+                  [0, 0, 0, 0],
+                  [0, 0, 0, 0]])
 
-    lqr = LQRController(model)
-    openloop = OpenLoop(model)
-    input_lim = np.array([[0.1]])
-    openloop.generate_rnd_input_seq(n_steps, input_lim, -input_lim)
+    lqr = LQRController(model, Q=Q, R=0.005)
 
-    model.simulate(x0, n_steps, control_law=lqr, tracking_target=target)
-    model.plot_trajectory()
-    model.plot_control_input()
+    exct_bounds = np.array([[[-1], [1]]])
+    deepc = DeePC(model, T_ini=4, N=50, init_law=lqr,
+                  excitation_bounds=exct_bounds)
+
+    deepc.build_controller()
+
+    # model.plot_trajectory()
+    # model.plot_control_input()
+
     plt.show()
 
 

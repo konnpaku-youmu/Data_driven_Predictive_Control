@@ -1,6 +1,7 @@
 import numpy as np
-from typing import Tuple, Callable
+from typing import Tuple, Callable, overload
 import matplotlib.pyplot as plt
+from helper import forward_euler
 
 plt.rcParams.update({
     "text.usetex": True,
@@ -9,19 +10,11 @@ plt.rcParams.update({
 })
 
 
-def forward_euler(A, B, Ts) -> Tuple[np.ndarray]:
-    n_states = A.shape[1]
-
-    Ad = np.eye(n_states) + Ts * A
-    Bd = Ts * B
-
-    return Ad, Bd
-
-
 class LinearSystem:
     def __init__(self, **kwargs) -> None:
         # state variables
         self.x = None
+        self.y = None
         self.u = None
         self.Ts = None
         self.sim_steps = None
@@ -41,13 +34,21 @@ class LinearSystem:
 
         self.n_states = A.shape[1]
         self.n_inputs = B.shape[1]
+        self.n_output = C.shape[0]
 
     def f(self, x, u) -> np.ndarray:
         x_next = self.A@x + self.B@u
         return x_next
-
+    
+    def output(self, x, u) -> np.ndarray:
+        y = self.C@x + self.D@u
+        return y
+    
+    def rst(self, x0:np.ndarray) -> None:
+        self.x[0] = x0
+    
     def simulate(self, x0: np.ndarray, n_steps: int,
-                 control_law: Callable = None, 
+                 control_law: Callable = None,
                  tracking_target: np.ndarray = None) -> None:
 
         if control_law is None:
@@ -56,31 +57,42 @@ class LinearSystem:
             control_law = dummy_control
             print("No control input. Autonomous system")
 
+        if tracking_target is None:
+            tracking_target = np.zeros([n_steps, self.n_states, 1])
+
         self.x = np.ndarray([n_steps, self.n_states, 1])
+        self.y = np.ndarray([n_steps, self.n_output, 1])
         self.u = np.zeros([n_steps, self.n_inputs, 1])
         self.x[0] = x0
+        self.y[0] = self.output(self.x[0], self.u[0])
         self.sim_steps = n_steps
-        self.sim_trange = np.linspace(0, self.sim_steps*self.Ts, self.sim_steps)
+        self.sim_trange = np.linspace(
+            0, self.sim_steps*self.Ts, self.sim_steps)
 
         for k in range(1, n_steps):
             uk = control_law(self.x[k-1] - tracking_target[k], k)
             self.u[k] = uk
             x_next = self.f(self.x[k-1], uk)
             self.x[k] = x_next
-    
-    def plot_trajectory(self, **pltargs):
+            self.y[k] = self.output(self.x[k], uk)
 
-        for i in range(self.n_states):
-            plt.plot(self.sim_trange, self.x[:, i, :], label=r"$x_{}$".format(i), **pltargs)
+    def plot_trajectory(self, **pltargs):
+        pltargs.setdefault('linewidth', 1)
+
+        for i in range(self.n_states-2):
+            plt.plot(self.sim_trange, self.x[:, i, :],
+                     label=r"$x_{}$".format(i), **pltargs)
 
         plt.legend()
-    
+
     def plot_control_input(self, **pltargs):
+        pltargs.setdefault('linewidth', 0.7)
         pltargs.setdefault('linestyle', '--')
 
         for i in range(self.n_inputs):
-            plt.step(self.sim_trange, self.u[:, i, :], label=r"$u_{}$".format(i), **pltargs)
-        
+            plt.step(self.sim_trange, self.u[:, i, :],
+                     label=r"$u_{}$".format(i), **pltargs)
+
         plt.legend()
 
 
@@ -131,10 +143,7 @@ class InvertedPendulum(LinearSystem):
         C = np.array([[1., 0., 0., 0.],
                       [0., 1., 0., 0.]])
 
-        D = np.array([[0.], 
+        D = np.array([[0.],
                       [0.]])
 
         self.build_system_model(A, B, C, D, **kwargs)
-
-
-
