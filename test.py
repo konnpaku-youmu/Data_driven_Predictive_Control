@@ -10,7 +10,7 @@ def main():
 
     model = InvertedPendulum(Ts=0.05)
     x0 = np.array([[0.1], [0.], [0.], [0.]])
-    n_steps = 100
+    n_steps = 200
 
     Q = np.array([[1.5, 0, 0, 0],
                   [0, 10, 0, 0],
@@ -24,12 +24,14 @@ def main():
                   excitation_bounds=exct_bounds)
 
     deepc.build_controller()
+    
+    model.simulate(x0, n_steps, control_law=deepc)
 
     # model.plot_trajectory()
     # model.plot_control_input()
 
     plt.show()
-
+ 
 
 if __name__ == "__main__":
     main()

@@ -7,7 +7,7 @@ clear all
 close all
 clc
 
-%% Variables to choose
+% Variables to choose
 
 control_horizon = 1; %choose how many time steps of optimal control to apply
 N = 30;%prediction horizon

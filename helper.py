@@ -11,6 +11,24 @@ def forward_euler(A, B, Ts) -> Tuple[np.ndarray]:
 
     return Ad, Bd
 
+def zoh(A, B, Ts) -> Tuple[np.ndarray]:
+    em_upper = np.hstack((A, B))
+
+    # Need to stack zeros under the a and b matrices
+    em_lower = np.hstack((np.zeros((B.shape[1], A.shape[0])),
+                          np.zeros((B.shape[1], B.shape[1]))))
+
+    em = np.vstack((em_upper, em_lower))
+    ms = linalg.expm(Ts * em)
+
+    # Dispose of the lower rows
+    ms = ms[:A.shape[0], :]
+
+    Ad = ms[:, 0:A.shape[1]]
+    Bd = ms[:, A.shape[1]:]
+
+    return Ad, Bd
+
 def hankelize(vec: np.ndarray, L: int) -> np.ndarray:
     T = vec.shape[0]
     n = vec.shape[1]
