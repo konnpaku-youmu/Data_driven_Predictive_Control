@@ -25,10 +25,12 @@ def main():
 
     deepc.build_controller()
     
-    model.simulate(x0, n_steps, control_law=deepc)
+    sp_gen = SetpointGenerator(model, n_steps, 0, "rand", exct_bounds)
+    model.simulate(x0, n_steps, control_law=deepc, tracking_target=sp_gen())
 
-    # model.plot_trajectory()
-    # model.plot_control_input()
+    print(model.y.shape)
+    model.plot_trajectory()
+    model.plot_control_input()
 
     plt.show()
  

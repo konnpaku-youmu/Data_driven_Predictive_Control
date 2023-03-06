@@ -78,16 +78,14 @@ class LinearSystem:
             self.u[0] = np.zeros([self.n_inputs, 1])
             self.x[0] = _x0
             self.y[0] = self.output(self.x[0], self.u[0])
-        else:
-            _x0 = self.x[-1]
         
         self.sim_steps = n_steps
         self.sim_trange = np.linspace(
             0, self.sim_steps*self.Ts, self.sim_steps)
 
         start = self.x.shape[0]
-        for k in range(start, n_steps):
-            uk = control_law(self.x[k-1] - tracking_target[k], k)
+        for k in range(start, start + n_steps):
+            uk = control_law(self.x[k-1] - tracking_target[k-start], k)
             self.update_u(uk)
             x_next = self.f(self.x[k-1], self.u[k])
             self.update_x(x_next)
@@ -97,8 +95,10 @@ class LinearSystem:
     def plot_trajectory(self, **pltargs):
         pltargs.setdefault('linewidth', 1)
 
+        plot_range = np.linspace(0, self.y.shape[0]*self.Ts, self.y.shape[0])
+
         for i in range(self.n_states-2):
-            plt.plot(self.sim_trange, self.x[:, i, :],
+            plt.plot(plot_range, self.y[:, i, :],
                      label=r"$x_{}$".format(i), **pltargs)
 
         plt.legend()
@@ -107,8 +107,10 @@ class LinearSystem:
         pltargs.setdefault('linewidth', 0.7)
         pltargs.setdefault('linestyle', '--')
 
+        plot_range = np.linspace(0, self.y.shape[0]*self.Ts, self.y.shape[0])
+
         for i in range(self.n_inputs):
-            plt.step(self.sim_trange, self.u[:, i, :],
+            plt.step(plot_range, self.u[:, i, :],
                      label=r"$u_{}$".format(i), **pltargs)
 
         plt.legend()

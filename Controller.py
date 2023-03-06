@@ -99,7 +99,7 @@ class DeePC(Controller):
     def build_controller(self, **kwargs) -> None:
         min_exc_len = (self.model.n_inputs + 1) * \
             (self.T_ini + self.N + self.model.n_states) - 1
-        print(min_exc_len)
+        plt.vlines(min_exc_len*self.model.Ts, ymin=-5, ymax=5)
 
         # Excite the system
         x0 = np.zeros([self.model.n_states, 1])
@@ -116,7 +116,7 @@ class DeePC(Controller):
                         "g": self.traj_constraint,
                         "p": self.opt_p}
 
-        opts = {"ipopt.tol":1e-10, "expand":True}
+        opts = {"ipopt.tol": 1e-9, "expand": True, "verbose": False, "print_time":False}
         self.solver = nlpsol("solver", "ipopt", self.problem, opts)
 
     def set_constraints(self) -> None:
@@ -137,8 +137,8 @@ class DeePC(Controller):
         self.opt_p = struct_symMX([entry('u_ini', shape=(self.model.n_inputs), repeat=self.T_ini),
                                    entry('y_ini', shape=(self.model.n_output), repeat=self.T_ini)])
         self.opti_vars = struct_symMX([entry("u", shape=(self.model.n_inputs), repeat=self.N),
-                                   entry("y", shape=(self.model.n_output), repeat=self.N),
-                                   entry("g", shape=[U_f.shape[1]])])
+                                       entry("y", shape=(self.model.n_output), repeat=self.N),
+                                       entry("g", shape=[U_f.shape[1]])])
         self.opti_vars_num = self.opti_vars(0)
         self.opt_p_num = self.opt_p(0)
 
@@ -147,7 +147,7 @@ class DeePC(Controller):
         g = self.opti_vars['g']
         self.traj_constraint = A@g - b
 
-        ## input constraints and output constraints
+        # input constraints and output constraints
         optim_var = self.opti_vars
         self.lbx = optim_var(-np.inf)
         self.ubx = optim_var(np.inf)
@@ -155,7 +155,7 @@ class DeePC(Controller):
         self.ubx['u'] = 5.0
         self.lbx['y'] = np.array([[-1.0], [-0.5]])
         self.ubx['y'] = np.array([[1.0], [0.5]])
-        
+
     def loss(self) -> cs.MX:
         loss = 0
         for k in range(self.N):
@@ -165,19 +165,21 @@ class DeePC(Controller):
         return loss
 
     def __call__(self, x: np.ndarray, k: int) -> np.ndarray:
-        
         y_Tini = self.model.y[-self.T_ini:].squeeze()
         u_Tini = self.model.u[-self.T_ini:].squeeze()
         self.opt_p_num['u_ini'] = vertsplit(u_Tini)
         self.opt_p_num['y_ini'] = vertsplit(y_Tini)
-        res = self.solver(p=self.opt_p_num, lbg=0, ubg=0, lbx=self.lbx, ubx=self.ubx)
+        res = self.solver(p=self.opt_p_num, lbg=0, ubg=0,
+                          lbx=self.lbx, ubx=self.ubx)
 
-        print(res['g'].shape, self.U_f.shape)
+        # Extract optimal solution
+        self.opti_vars_num.master = res['x']
+        opti_g = self.opti_vars_num['g']
+        opti_u = list(map(abs, self.opti_vars_num['u']))
 
-        exit()
+        u = self.U_f @ opti_g
 
-        return None
-
+        return u[0]
 
 class SetpointGenerator:
     def __init__(self, model: LinearSystem, n_steps,
