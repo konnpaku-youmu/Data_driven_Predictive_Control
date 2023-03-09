@@ -9,6 +9,9 @@ plt.rcParams.update({
     "font.size": 14
 })
 
+class System:
+    def __init__(self, **kwargs) -> None:
+        pass
 
 class LinearSystem:
     def __init__(self, **kwargs) -> None:
@@ -44,8 +47,10 @@ class LinearSystem:
         y = self.C@x + self.D@u
         return y
     
-    def rst(self, x0:np.ndarray) -> None:
-        self.x[0] = x0
+    def rst(self) -> None:
+        self.x = None
+        self.y = None
+        self.u = None
     
     def update_u(self, uk:np.ndarray) -> None:
         self.u = np.concatenate([self.u, np.atleast_3d(uk)], axis=0)
@@ -70,13 +75,12 @@ class LinearSystem:
             tracking_target = np.zeros([n_steps, self.n_states, 1])
 
         if self.x is None and self.u is None:
-            _x0 = x0
             self.x = np.ndarray([1, self.n_states, 1])
             self.y = np.ndarray([1, self.n_output, 1])
             self.u = np.zeros([1, self.n_inputs, 1])
 
             self.u[0] = np.zeros([self.n_inputs, 1])
-            self.x[0] = _x0
+            self.x[0] = x0
             self.y[0] = self.output(self.x[0], self.u[0])
         
         self.sim_steps = n_steps
@@ -84,22 +88,22 @@ class LinearSystem:
             0, self.sim_steps*self.Ts, self.sim_steps)
 
         start = self.x.shape[0]
-        for k in range(start, start + n_steps):
-            uk = control_law(self.x[k-1] - tracking_target[k-start], k)
+        for k in range(start, start + n_steps-1):
+            uk = control_law(self.x[-1], tracking_target[k-start])
             self.update_u(uk)
-            x_next = self.f(self.x[k-1], self.u[k])
+            x_next = self.f(self.x[-1], self.u[-1])
             self.update_x(x_next)
-            yk = self.output(self.x[k-1], self.u[k]).squeeze()
+            yk = self.output(self.x[-1], self.u[-1]).squeeze()
             self.update_y(yk)
 
     def plot_trajectory(self, **pltargs):
         pltargs.setdefault('linewidth', 1)
 
-        plot_range = np.linspace(0, self.y.shape[0]*self.Ts, self.y.shape[0])
+        plot_range = np.linspace(0, self.y.shape[0]*self.Ts, self.y.shape[0], endpoint=False)
 
-        for i in range(self.n_states-2):
+        for i in range(self.n_output):
             plt.plot(plot_range, self.y[:, i, :],
-                     label=r"$x_{}$".format(i), **pltargs)
+                     label=r"$y_{}$".format(i), **pltargs)
 
         plt.legend()
 
@@ -107,10 +111,10 @@ class LinearSystem:
         pltargs.setdefault('linewidth', 0.7)
         pltargs.setdefault('linestyle', '--')
 
-        plot_range = np.linspace(0, self.y.shape[0]*self.Ts, self.y.shape[0])
+        plot_range = np.linspace(0, self.y.shape[0]*self.Ts, self.y.shape[0], endpoint=False)
 
         for i in range(self.n_inputs):
-            plt.step(plot_range, self.u[:, i, :],
+            plt.plot(plot_range, self.u[:, i, :],
                      label=r"$u_{}$".format(i), **pltargs)
 
         plt.legend()

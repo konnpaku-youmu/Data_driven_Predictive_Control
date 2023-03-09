@@ -41,6 +41,9 @@ def hankelize(vec: np.ndarray, L: int) -> np.ndarray:
     
     return H
 
+def pagerize(vec: np.ndarray, L: int, spacing: int = 2) -> np.ndarray:
+    ...
+
 if __name__ == "__main__":
     v = np.random.rand(115, 2, 1)
     H = hankelize(v, 54)

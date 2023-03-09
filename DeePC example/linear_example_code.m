@@ -11,7 +11,7 @@ clc
 
 control_horizon = 1; %choose how many time steps of optimal control to apply
 N = 30;%prediction horizon
-Tini = 2; %initial condition horizon
+Tini = 5; %initial condition horizon
 lambda_g = 500; %regularizer weight on g vector
 lambda_y = 100000; %regularizer weight for slack variable
 
@@ -112,7 +112,7 @@ uini_sim = zeros(m*Tini,1);
 yini_sim = zeros(p*Tini,1);
 
 for i = 1:sim_time
-    r_sim = 6;%constant
+    r_sim = mod(i, x_max(1));%constant
     reference(:,i) = r_sim;
     u_sim(i) = controller_DeePC([uini_sim; yini_sim; r_sim]);
     x_sim(:,i+1) = A*x_sim(:,i) + B*u_sim(i);
