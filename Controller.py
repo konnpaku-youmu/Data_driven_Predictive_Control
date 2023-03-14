@@ -107,7 +107,7 @@ class DeePC(Controller):
 
         self.opt_p = None  # Trajectory constraint: RHS()
         self.opti_vars = None
-        self.ref = np.ones([self.N, self.model.n_output, 1])*np.random.uniform(-0.5, 0.5)    # Tracking reference
+        self.ref = np.zeros([self.N, self.model.n_output, 1])    # Tracking reference
         self.traj_constraint = None
 
     def build_controller(self, **kwargs) -> None:
@@ -118,7 +118,7 @@ class DeePC(Controller):
         # Excite the system
         x0 = np.zeros([self.model.n_states, 1])
         sp_gen = SetpointGenerator(
-            self.model, min_exc_len, 0, "step", self.exct_bounds)
+            self.model, min_exc_len, 0, "rand", self.exct_bounds)
         sp_gen.plot()
         self.model.simulate(
             x0, min_exc_len, control_law=self.init_ctrl, tracking_target=sp_gen())
@@ -147,20 +147,22 @@ class DeePC(Controller):
         # Split Hu and Hy into Hp and Hf (ETH paper Eq.5)
         U_p, U_f = np.split(H_u, [self.model.n_inputs * self.T_ini], axis=0)
         Y_p, Y_f = np.split(H_y, [self.model.n_output * self.T_ini], axis=0)
+        self.Y_f = Y_f
         self.U_f = U_f
 
         self.opt_p = struct_symMX([entry('u_ini', shape=(self.model.n_inputs), repeat=self.T_ini),
                                    entry('y_ini', shape=(self.model.n_output), repeat=self.T_ini),
-                                   entry('ref', shape=(self.model.n_output), repeat=self.N)])
+                                   entry('ref', shape=(self.model.n_output))])
         self.opti_vars = struct_symMX([entry("u", shape=(self.model.n_inputs), repeat=self.N),
                                        entry("y", shape=(self.model.n_output), repeat=self.N),
                                        entry("g", shape=[U_f.shape[1]])])
         self.opti_vars_num = self.opti_vars(0)
         self.opt_p_num = self.opt_p(0)
 
-        A = vertcat(U_p, Y_p, U_f, Y_f)
-        b = vertcat(*self.opt_p['u_ini'], *self.opt_p['y_ini'], 
-                    *self.opti_vars['u'], *self.opti_vars['y'])
+        A = vertcat(U_p, Y_p, U_f)
+        b = vertcat(*self.opt_p['u_ini'], 
+                    *self.opt_p['y_ini'], 
+                    *self.opti_vars['u'])
         g = self.opti_vars['g']
         self.traj_constraint = A@g - b
 
@@ -177,16 +179,32 @@ class DeePC(Controller):
         loss = 0
         Q, R, = self.Q, self.R
         for k in range(self.N):
-            y_k = self.opti_vars["y", k] - self.opt_p['ref', k]
+            y_k = self.opti_vars["y", k] - self.opt_p_num['ref']
             u_k = self.opti_vars["u", k]
             loss += sum1(y_k.T @ Q @ y_k) + sum1(u_k.T @ R @ u_k)
+        
+        # regularization terms
+        λ_s = 1e0
+        g = self.opti_vars["g"]
+        Y_f = vertcat(self.Y_f)
+        y = vertcat(*self.opti_vars['y'])
+        meas_dev = Y_f@g - y
+        loss += λ_s * cs.norm_2(meas_dev)**2
+
         return loss
 
     def __call__(self, x: np.ndarray, r: int) -> np.ndarray:
-        y_Tini = self.model.y[-self.T_ini:].squeeze()
-        u_Tini = self.model.u[-self.T_ini:].squeeze()
-        self.opt_p_num['u_ini'] = vertsplit(u_Tini)
-        self.opt_p_num['y_ini'] = vertsplit(y_Tini)
+        y_ini = self.model.y[-self.T_ini:].squeeze()
+        u_ini = self.model.u[-self.T_ini:].squeeze()
+        self.opt_p_num['u_ini'] = vertsplit(u_ini)
+        self.opt_p_num['y_ini'] = vertsplit(y_ini)
+        self.opt_p_num['ref'] = vertsplit(r[:2].squeeze())
+
+        # update the loss function for each step
+        self.problem["f"] = self.loss()
+        opts = {"ipopt.tol": 1e-12, "ipopt.max_iter":50, "ipopt.print_level": 0, "expand": True, "verbose": False, "print_time":False}
+        self.solver = nlpsol("solver", "ipopt", self.problem, opts)
+
         res = self.solver(p=self.opt_p_num, lbg=0, ubg=0,
                           lbx=self.lbx, ubx=self.ubx)
 
@@ -223,7 +241,6 @@ class SetpointGenerator:
                 kwargs.setdefault("step_time", int(1/self.model.Ts))
                 kwargs.setdefault("height", 1)
                 step_time = kwargs["step_time"]
-                print(step_time)
                 height = kwargs["height"]
                 sp_state[step_time:] = height
             elif shape == "rand":
@@ -243,7 +260,7 @@ class SetpointGenerator:
         sim_range = np.linspace(
             0, self.sim_steps*self.model.Ts, self.sim_steps, endpoint=False)
         for i in range(self.model.n_states):
-            plt.plot(sim_range, self.sp[:, i, :], **kwargs)
+            plt.step(sim_range, self.sp[:, i, :], **kwargs)
 
     def __call__(self) -> np.ndarray:
         return self.sp
