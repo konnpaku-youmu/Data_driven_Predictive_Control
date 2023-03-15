@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 def main():
     model = InvertedPendulum(Ts=0.05, noisy=True)
     x0 = np.array([[0.5], [0.], [0.], [0.]])
-    horizon = 20
-    n_steps = 200
+    horizon = 15
+    n_steps = 2000
 
     Q = np.array([[1.5, 0, 0, 0],
                   [0, 10, 0, 0],
@@ -21,7 +21,7 @@ def main():
 
     Q_dpc = np.array([[25, 0], 
                       [0,  4]])
-    R_dpc = 0.1
+    R_dpc = 0.05
     exct_bounds = np.array([[[-0.5], [0.5]]])
     deepc = DeePC(model, T_ini=8, N=horizon, data_mat="hankel", 
                   init_law=lqr, excitation_bounds=exct_bounds, 
