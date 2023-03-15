@@ -46,10 +46,10 @@ class LinearSystem:
         self.noisy = kwargs["noisy"]
 
         if self.noisy:
-            kwargs.setdefault("s_y", np.diag([1e-5, 1e-4]))
+            kwargs.setdefault("s_y", np.diag([9e-6, 1e-4]))
             self.σ_y = kwargs["s_y"]
         else:
-            self.σ_y = np.zeros([self.n_output, 1])
+            self.σ_y = np.diag([0, 0])
     
     def measurement_noise(self) -> np.ndarray:
         return np.random.multivariate_normal(np.zeros(self.n_output), self.σ_y, size=[1]).T
@@ -106,6 +106,10 @@ class LinearSystem:
             yk = self.output(self.x[-1], self.u[-1]).squeeze()
             self.update_y(yk)
 
+            if np.abs(yk[0])>=10 or np.abs(yk[1])>=5:
+                print("Divergence!")
+                break
+
     def plot_trajectory(self, **pltargs):
         pltargs.setdefault('linewidth', 1)
 
@@ -117,6 +121,7 @@ class LinearSystem:
                      label=r"$y_{}$".format(i), **pltargs)
 
         plt.legend()
+        plt.ylim(-1, 1)
 
     def plot_control_input(self, **pltargs):
         pltargs.setdefault('linewidth', 0.7)
