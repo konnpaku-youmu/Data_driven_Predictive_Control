@@ -120,14 +120,14 @@ class DeePC(Controller):
         nu = self.model.n_inputs
 
         if self.data_mat == "hankel":
-            self.min_exc_len = (nu + 1) * (L + nx) - 1
+            self.min_exc_len = 2 * (nu + 1) * (L + nx) - 1
         elif self.data_mat == "page":
             self.min_exc_len = L*((nu*L+1)*(nx+1)-1)
 
         # Excite the system
         x0 = np.zeros([self.model.n_states, 1])
         sp_gen = SetpointGenerator(
-            self.model.n_states, self.min_exc_len, self.model.Ts, 0, "rand", self.exct_bounds)
+            self.model.n_states, self.min_exc_len, self.model.Ts, 0, "rand", self.exct_bounds, switching_prob=0.1)
         self.model.simulate(
             x0, self.min_exc_len, control_law=self.init_ctrl, tracking_target=sp_gen())
         self.ref = sp_gen()[:, :2]
@@ -148,24 +148,17 @@ class DeePC(Controller):
     def set_constraints(self) -> None:
 
         L = self.T_ini + self.N
-        nx = self.model.n_states
-        nu = self.model.n_inputs
 
-        H_u = hankelize(self.model.u, L)
-        H_y = hankelize(self.model.y, L)
-
-        # Check full-rank condition
-        H_u_pe = hankelize(self.model.u, self.T_ini+self.N+self.model.n_states)
-        if np.linalg.matrix_rank(H_u_pe) == H_u_pe.shape[0]:
-            print("Persistently excited of order T_ini+N+n = {}".format(self.T_ini +
-                  self.N+self.model.n_states))
-
-        P_u = pagerize(self.model.u, L)
-        P_y = pagerize(self.model.y, L)
+        if self.data_mat == "hankel":
+            M_u = hankelize(self.model.u, L)
+            M_y = hankelize(self.model.y, L)
+        elif self.data_mat == "page":
+            M_u = pagerize(self.model.u, L)
+            M_y = pagerize(self.model.y, L)
 
         # Split Hu and Hy into Hp and Hf (ETH paper Eq.5)
-        U_p, U_f = np.split(P_u, [self.model.n_inputs * self.T_ini], axis=0)
-        Y_p, Y_f = np.split(P_y, [self.model.n_output * self.T_ini], axis=0)
+        U_p, U_f = np.split(M_u, [self.model.n_inputs * self.T_ini], axis=0)
+        Y_p, Y_f = np.split(M_y, [self.model.n_output * self.T_ini], axis=0)
         self.Y_f = Y_f
         self.U_f = U_f
 
@@ -180,10 +173,18 @@ class DeePC(Controller):
         self.opti_vars_num = self.opti_vars(0)
         self.opt_p_num = self.opt_p(0)
 
-        A = vertcat(U_p, Y_p, U_f)
-        b = vertcat(*self.opt_p['u_ini'],
-                    *self.opt_p['y_ini'],
-                    *self.opti_vars['u'])
+        if self.model.noisy:
+            A = vertcat(U_p, Y_p, U_f)
+            b = vertcat(*self.opt_p['u_ini'],
+                        *self.opt_p['y_ini'],
+                        *self.opti_vars['u'])
+        else:
+            A = vertcat(U_p, Y_p, U_f, Y_f)
+            b = vertcat(*self.opt_p['u_ini'],
+                        *self.opt_p['y_ini'],
+                        *self.opti_vars['u'],
+                        *self.opti_vars['y'])
+        
         g = self.opti_vars['g']
         self.traj_constraint = A@g - b
 
@@ -204,16 +205,17 @@ class DeePC(Controller):
             u_k = self.opti_vars["u", k]
             loss += sum1(y_k.T @ Q @ y_k) + sum1(u_k.T @ R @ u_k)
 
-        # regularization terms
-        λ_s = 5e3
-        g = self.opti_vars["g"]
-        Y_f = vertcat(self.Y_f)
-        y = vertcat(*self.opti_vars['y'])
-        meas_dev = Y_f@g - y
-        loss += λ_s * cs.norm_2(meas_dev)**2
+        if self.model.noisy:
+            # regularization terms
+            λ_s = 1e2
+            g = self.opti_vars["g"]
+            Y_f = vertcat(self.Y_f)
+            y = vertcat(*self.opti_vars['y'])
+            meas_dev = Y_f@g - y
+            loss += λ_s * cs.norm_2(meas_dev)**2
 
-        λ_g = 1e-1
-        loss += λ_g * cs.norm_2(g)**2
+            λ_g = 1e1
+            loss += λ_g * cs.norm_2(g)**2
 
         return loss
 

@@ -12,11 +12,6 @@ plt.rcParams.update({
 
 class System:
     def __init__(self, **kwargs) -> None:
-        pass
-
-
-class LinearSystem:
-    def __init__(self, **kwargs) -> None:
         # state variables
         self.x = None
         self.y = None
@@ -26,6 +21,13 @@ class LinearSystem:
         # noise
         self.noisy = None
         self.σ_y = None
+    
+    def f(x:np.ndarray, u:np.ndarray) -> np.ndarray:
+        ...
+
+class LinearSystem(System):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
 
     def build_system_model(self, A: np.ndarray, B: np.ndarray, C: np.ndarray, D: np.ndarray, **kwargs) -> None:
         try:
@@ -107,7 +109,7 @@ class LinearSystem:
             self.update_y(yk)
 
             if np.abs(yk[0])>=10 or np.abs(yk[1])>=5:
-                print("Divergence!")
+                print("Diverge!")
                 break
 
     def plot_trajectory(self, **pltargs):
@@ -117,7 +119,7 @@ class LinearSystem:
             0, self.y.shape[0]*self.Ts, self.y.shape[0], endpoint=False)
 
         for i in range(self.n_output):
-            plt.plot(plot_range, self.y[:, i, :],
+            plt.step(plot_range, self.y[:, i, :],
                      label=r"$y_{}$".format(i), **pltargs)
 
         plt.legend()
