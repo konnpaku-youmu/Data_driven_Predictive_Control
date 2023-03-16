@@ -207,7 +207,7 @@ class DeePC(Controller):
 
         if self.model.noisy:
             # regularization terms
-            λ_s = 160
+            λ_s = 250
             g = self.opti_vars["g"]
             Y_f = vertcat(self.Y_f)
             y = vertcat(*self.opti_vars['y'])
