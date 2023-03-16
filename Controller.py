@@ -141,7 +141,7 @@ class DeePC(Controller):
                         "p": self.opt_p}
 
         opts = {"ipopt.tol": 1e-12, "ipopt.max_iter": 100, "ipopt.print_level": 0,
-                "expand": True, "verbose": False, "print_time": False}
+                "expand": True, "verbose": False, "print_time": True}
 
         self.solver = nlpsol("solver", "ipopt", self.problem, opts)
 
@@ -184,7 +184,7 @@ class DeePC(Controller):
                         *self.opt_p['y_ini'],
                         *self.opti_vars['u'],
                         *self.opti_vars['y'])
-        
+
         g = self.opti_vars['g']
         self.traj_constraint = A@g - b
 
@@ -201,20 +201,20 @@ class DeePC(Controller):
         loss = 0
         Q, R, = self.Q, self.R
         for k in range(self.N):
-            y_k = self.opti_vars["y", k] - self.opt_p_num['ref']
+            y_k = self.opti_vars["y", k] - self.opt_p['ref']
             u_k = self.opti_vars["u", k]
             loss += sum1(y_k.T @ Q @ y_k) + sum1(u_k.T @ R @ u_k)
 
         if self.model.noisy:
             # regularization terms
-            λ_s = 120
+            λ_s = 160
             g = self.opti_vars["g"]
             Y_f = vertcat(self.Y_f)
             y = vertcat(*self.opti_vars['y'])
             meas_dev = Y_f@g - y
             loss += λ_s * cs.norm_2(meas_dev)**2
 
-            λ_g = 5
+            λ_g = 12
             loss += λ_g * cs.norm_2(g)**2
 
         return loss
@@ -230,12 +230,6 @@ class DeePC(Controller):
         self.opt_p_num['y_ini'] = vertsplit(y_ini)
         self.opt_p_num['ref'] = vertsplit(r.squeeze())
         self.update_ref(r)
-
-        # update the loss function for each step
-        self.problem["f"] = self.loss()
-        opts = {"ipopt.tol": 1e-12, "ipopt.max_iter": 200, "ipopt.print_level": 0,
-                "expand": True, "verbose": False, "print_time": True}
-        self.solver = nlpsol("solver", "ipopt", self.problem, opts)
 
         res = self.solver(p=self.opt_p_num, lbg=0, ubg=0,
                           lbx=self.lbx, ubx=self.ubx)
