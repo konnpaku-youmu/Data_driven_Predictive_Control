@@ -99,7 +99,7 @@ class DeePC(Controller):
             self.Q = kwargs["Q"]
         except KeyError:
             C = model.C
-            no = model.n_output
+            no = model.n_outputs
             self.Q = C@C.T + np.eye(no, no) * 1e-2
 
         try:
@@ -163,17 +163,17 @@ class DeePC(Controller):
 
         # Split Hu and Hy into Hp and Hf (ETH paper Eq.5)
         U_p, U_f = np.split(M_u, [self.model.n_inputs * self.T_ini], axis=0)
-        Y_p, Y_f = np.split(M_y, [self.model.n_output * self.T_ini], axis=0)
+        Y_p, Y_f = np.split(M_y, [self.model.n_outputs * self.T_ini], axis=0)
         self.Y_f = Y_f
         self.U_f = U_f
 
         self.opt_p = struct_symMX([entry('u_ini', shape=(self.model.n_inputs), repeat=self.T_ini),
                                    entry('y_ini', shape=(
-                                       self.model.n_output), repeat=self.T_ini),
-                                   entry('ref', shape=(self.model.n_output))])
+                                       self.model.n_outputs), repeat=self.T_ini),
+                                   entry('ref', shape=(self.model.n_outputs))])
         self.opti_vars = struct_symMX([entry("u", shape=(self.model.n_inputs), repeat=self.N),
                                        entry("y", shape=(
-                                           self.model.n_output), repeat=self.N),
+                                           self.model.n_outputs), repeat=self.N),
                                        entry("g", shape=[U_f.shape[1]])])
         self.opti_vars_num = self.opti_vars(0)
         self.opt_p_num = self.opt_p(0)
@@ -253,7 +253,7 @@ class DeePC(Controller):
         plot_range = np.linspace(
             0, self.model.y.shape[0]*self.model.Ts, self.model.y.shape[0], endpoint=False)
 
-        for i in range(self.model.n_output):
+        for i in range(self.model.n_outputs):
             plt.step(plot_range[:self.min_exc_len],
                      self.ref[:self.min_exc_len, i, :], **pltargs)
             plt.step(plot_range[self.min_exc_len:], self.ref[self.min_exc_len:,

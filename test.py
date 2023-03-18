@@ -10,7 +10,7 @@ def main():
     model = InvertedPendulum(Ts=0.05, noisy=True)
     x0 = np.array([[0.5], [0.], [0.], [0.]])
     horizon = 20
-    n_steps = 500
+    n_steps = 200
 
     Q = np.array([[1.5, 0, 0, 0],
                   [0, 10, 0, 0],
@@ -28,9 +28,10 @@ def main():
                   Q=Q_dpc, R=R_dpc)
 
     deepc.build_controller()
-    sp_gen = SetpointGenerator(model.n_output, n_steps, model.Ts, 0, "rand", exct_bounds, switching_prob=0.01)
+    sp_gen = SetpointGenerator(model.n_outputs, n_steps, model.Ts, 0, "rand", exct_bounds, switching_prob=0.01)
     model.simulate(x0, n_steps, control_law=deepc, tracking_target=sp_gen())
 
+    plt.figure()
     model.plot_trajectory()
     # model.plot_control_input()
     deepc.plot_reference()

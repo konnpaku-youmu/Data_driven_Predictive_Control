@@ -25,11 +25,11 @@ class System:
 
         # noise
         self.noisy = None
-        self.σ_y = None # std of measurement noise
-    
+        self.σ_y = None  # std of measurement noise
+
     def build_system_model(self) -> None:
         ...
-    
+
     def update_u(self, uk: np.ndarray) -> None:
         self.u = np.concatenate([self.u, np.atleast_3d(uk)], axis=0)
 
@@ -54,7 +54,7 @@ class System:
 
         if self.x is None and self.u is None:
             self.x = np.ndarray([1, self.n_states, 1])
-            self.y = np.ndarray([1, self.n_output, 1])
+            self.y = np.ndarray([1, self.n_outputs, 1])
             self.u = np.zeros([1, self.n_inputs, 1])
 
             self.u[0] = np.zeros([self.n_inputs, 1])
@@ -64,88 +64,13 @@ class System:
         for k in range(1, n_steps):
             uk = control_law(self.x[-1], tracking_target[k])
             self.update_u(uk)
-            x_next = self.f(self.x[-1], self.u[-1])
+            x_next = self.f(x0=self.x[-1], p=self.u[-1])
             self.update_x(x_next)
             yk = self.output(self.x[-1], self.u[-1]).squeeze()
             self.update_y(yk)
-    
+
     def output(self, x, u):
         ...
-
-class NonlinearSystem(System):
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.dynamics = None
-    
-    def build_system_model(self, states: cs.MX, inputs: cs.MX, outputs: cs.MX, **kwargs) -> None:
-        # set default values for arguments
-        kwargs.setdefault("noisy", False)
-
-        try:
-            Ts = kwargs["Ts"]
-        except KeyError:
-            print("Continuous dynamics")
-
-        self.n_states = states.shape[0]
-        self.n_inputs = inputs.shape[0]
-        self.n_outputs = outputs.shape[0]
-        self.x = states
-        self.u = inputs
-        self.y = outputs
-        
-        self.noisy = kwargs["noisy"]
-
-        self.dynamics = self.define_dynamics()
-        self.f = self.get_discrete_dynamics()
-
-    def get_discrete_dynamics(self) -> None:
-        DAE = {"x": self.x,
-               "p": self.u,
-               "ode": self.dynamics}
-        opts = {"tf": self.Ts}
-        return cs.integrator('F', 'cvodes', DAE, opts)
-
-    def define_dynamics(self) -> cs.MX:
-        ...
-
-class LinearSystem(System):
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-
-    def build_system_model(self, A: np.ndarray, B: np.ndarray, C: np.ndarray, D: np.ndarray, **kwargs) -> None:
-        try:
-            Ts = kwargs["Ts"]
-            self.A, self.B = forward_euler(A, B, Ts)
-            self.Ts = Ts
-        except KeyError:
-            self.A, self.B = A, B
-            print("Continuous dynamics")
-
-        self.C, self.D = C, D
-
-        self.n_states = A.shape[1]
-        self.n_inputs = B.shape[1]
-        self.n_output = C.shape[0]
-
-        kwargs.setdefault("noisy", False)
-        self.noisy = kwargs["noisy"]
-
-        if self.noisy:
-            kwargs.setdefault("s_y", np.diag([9e-6, 1e-4]))
-            self.σ_y = kwargs["s_y"]
-        else:
-            self.σ_y = np.diag(np.zeros(self.n_output))
-    
-    def measurement_noise(self) -> np.ndarray:
-        return np.random.multivariate_normal(np.zeros(self.n_output), self.σ_y, size=[1]).T
-
-    def f(self, x0, p) -> np.ndarray:
-        x_next = self.A@x0 + self.B@p
-        return x_next.squeeze()
-
-    def output(self, x, u) -> np.ndarray:
-        y = self.C@x + self.D@u + self.measurement_noise()
-        return y
 
     def rst(self) -> None:
         self.x = None
@@ -158,12 +83,11 @@ class LinearSystem(System):
         plot_range = np.linspace(
             0, self.y.shape[0]*self.Ts, self.y.shape[0], endpoint=False)
 
-        for i in range(self.n_output):
+        for i in range(self.n_outputs):
             plt.step(plot_range, self.y[:, i, :],
                      label=r"$y_{}$".format(i), **pltargs)
 
         plt.legend()
-        plt.ylim(-1, 1)
 
     def plot_control_input(self, **pltargs):
         pltargs.setdefault('linewidth', 0.7)
@@ -178,6 +102,93 @@ class LinearSystem(System):
 
         plt.legend()
 
+
+class NonlinearSystem(System):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.dynamics = None
+
+    def build_system_model(self, states: cs.MX, inputs: cs.MX, outputs: cs.MX, **kwargs) -> None:
+        # set default values for arguments
+        kwargs.setdefault("noisy", False)
+
+        try:
+            self.Ts = kwargs["Ts"]
+        except KeyError:
+            print("Continuous dynamics")
+
+        self.n_states = states.shape[0]
+        self.n_inputs = inputs.shape[0]
+        self.n_outputs = outputs.shape[0]
+        self.sym_x = states
+        self.sym_u = inputs
+        self.sym_y = outputs
+
+        self.noisy = kwargs["noisy"]
+
+        self.dynamics = self.define_dynamics()
+        self.F = self.discrete_dynamics()
+
+    def discrete_dynamics(self) -> None:
+        DAE = {"x": self.sym_x,
+               "p": self.sym_u,
+               "ode": self.dynamics}
+        opts = {"tf": self.Ts}
+        return cs.integrator('F', 'cvodes', DAE, opts)
+
+    def define_dynamics(self) -> cs.MX:
+        ...
+
+    def f(self, x0, p) -> np.ndarray:
+        x_next = self.F(x0=x0, p=p)
+        x_next = x_next['xf']
+        return x_next.full().squeeze()
+
+    def output(self, x, u) -> np.ndarray:
+        return x
+
+    def plot_phasespace(self, **pltargs) -> None:
+        plt.scatter(self.x[:, 1, :], self.x[:, 0, :], s=0.1)
+        plt.axis("equal")
+
+
+class LinearSystem(System):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+
+    def build_system_model(self, A: np.ndarray, B: np.ndarray, C: np.ndarray, D: np.ndarray, **kwargs) -> None:
+        try:
+            self.Ts = kwargs["Ts"]
+            self.A, self.B = forward_euler(A, B, self.Ts)
+        except KeyError:
+            self.A, self.B = A, B
+            print("Continuous dynamics")
+
+        self.C, self.D = C, D
+
+        self.n_states = A.shape[1]
+        self.n_inputs = B.shape[1]
+        self.n_outputs = C.shape[0]
+
+        kwargs.setdefault("noisy", False)
+        self.noisy = kwargs["noisy"]
+
+        if self.noisy:
+            kwargs.setdefault("s_y", np.diag([9e-6, 1e-4]))
+            self.σ_y = kwargs["s_y"]
+        else:
+            self.σ_y = np.diag(np.zeros(self.n_outputs))
+
+    def measurement_noise(self) -> np.ndarray:
+        return np.random.multivariate_normal(np.zeros(self.n_outputs), self.σ_y, size=[1]).T
+
+    def f(self, x0, p) -> np.ndarray:
+        x_next = self.A@x0 + self.B@p
+        return x_next.squeeze()
+
+    def output(self, x, u) -> np.ndarray:
+        y = self.C@x + self.D@u + self.measurement_noise()
+        return y
 
 class SimpleHarmonic(LinearSystem):
     def __init__(self, **kwargs) -> None:
@@ -232,6 +243,23 @@ class InvertedPendulum(LinearSystem):
         self.build_system_model(A, B, C, D, **kwargs)
 
 
+class VolterraEquations(NonlinearSystem):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+
+        x = cs.MX.sym('x', 2)
+        u = cs.MX.sym('u', 1)
+        y = cs.MX.sym('y', 2)
+
+        self.build_system_model(x, u, y, **kwargs)
+
+    def define_dynamics(self) -> cs.MX:
+        x0_dot = 0.3 * self.sym_x[0] - 0.5 * self.sym_x[0] * self.sym_x[1]
+        x1_dot = 0.2 * self.sym_x[0] * self.sym_x[1] - 0.1 * self.sym_x[1]
+
+        return cs.vertcat(x0_dot, x1_dot)
+
+
 class VanderpolOscillator(NonlinearSystem):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -244,14 +272,37 @@ class VanderpolOscillator(NonlinearSystem):
 
     def define_dynamics(self) -> cs.MX:
         # system equation
-        x0_dot = (3-self.x[1]**2)*self.x[0] - self.x[1]
-        x1_dot = self.x[0]
+        x0_dot = (3-self.sym_x[1]**2)*self.sym_x[0] - self.sym_x[1]
+        x1_dot = self.sym_x[0]
 
         return cs.vertcat(x0_dot, x1_dot)
 
 
-if __name__=="__main__":
-    model = VanderpolOscillator(Ts=0.05)
+class LorenzAttractor(NonlinearSystem):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
 
-    x0 = np.array([[0.2],[0.4]])
-    model.simulate(x0, 100)
+        x = cs.MX.sym('x', 3)
+        u = cs.MX.sym('u', 1)
+        y = cs.MX.sym('y', 3)
+
+        self.build_system_model(x, u, y, **kwargs)
+
+    def define_dynamics(self) -> cs.MX:
+        # system equation
+        x0_dot = 10 * (self.sym_x[1] - self.sym_x[0])
+        x1_dot = self.sym_x[0] * (28 - self.sym_x[2]) - self.sym_x[1]
+        x2_dot = self.sym_x[0] * self.sym_x[1] - 2.2 * self.sym_x[2]
+
+        return cs.vertcat(x0_dot, x1_dot, x2_dot)
+
+
+if __name__ == "__main__":
+    # model = VanderpolOscillator(Ts=0.05)
+    # model = LorenzAttractor(Ts=0.05)
+    model = VolterraEquations(Ts=0.05)
+
+    x0 = np.array([[0.1], [0.2]])
+    model.simulate(x0, 1000)
+    model.plot_phasespace()
+    plt.show()
