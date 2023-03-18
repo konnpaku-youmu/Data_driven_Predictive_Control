@@ -78,6 +78,11 @@ class LQRController(Controller):
         return self.K@(x - r)
 
 
+class MPC(Controller):
+    def __init__(self, model: LinearSystem) -> None:
+        super().__init__(model)
+
+
 class DeePC(Controller):
     def __init__(self, model: LinearSystem, **kwargs) -> None:
         super().__init__(model)
@@ -122,7 +127,7 @@ class DeePC(Controller):
         if self.data_mat == "hankel":
             self.min_exc_len = 2 * (nu + 1) * (L + nx) - 1
         elif self.data_mat == "page":
-            self.min_exc_len = L*((nu*L+1)*(nx+1)-1)
+            self.min_exc_len = 2*L*((nu+1)*(nx+1)-1)
 
         # Excite the system
         x0 = np.zeros([self.model.n_states, 1])
@@ -153,8 +158,8 @@ class DeePC(Controller):
             M_u = hankelize(self.model.u, L)
             M_y = hankelize(self.model.y, L)
         elif self.data_mat == "page":
-            M_u = pagerize(self.model.u, L)
-            M_y = pagerize(self.model.y, L)
+            M_u = pagerize(self.model.u, L, L//2-2)
+            M_y = pagerize(self.model.y, L, L//2-2)
 
         # Split Hu and Hy into Hp and Hf (ETH paper Eq.5)
         U_p, U_f = np.split(M_u, [self.model.n_inputs * self.T_ini], axis=0)
@@ -203,18 +208,18 @@ class DeePC(Controller):
         for k in range(self.N):
             y_k = self.opti_vars["y", k] - self.opt_p['ref']
             u_k = self.opti_vars["u", k]
-            loss += sum1(y_k.T @ Q @ y_k) + sum1(u_k.T @ R @ u_k)
+            loss += (1/2) * sum1(y_k.T @ Q @ y_k) + (1/2) * sum1(u_k.T @ R @ u_k)
 
         if self.model.noisy:
             # regularization terms
-            λ_s = 250
+            λ_s = 120
             g = self.opti_vars["g"]
             Y_f = vertcat(self.Y_f)
             y = vertcat(*self.opti_vars['y'])
             meas_dev = Y_f@g - y
             loss += λ_s * cs.norm_2(meas_dev)**2
 
-            λ_g = 12
+            λ_g = 58
             loss += λ_g * cs.norm_2(g)**2
 
         return loss

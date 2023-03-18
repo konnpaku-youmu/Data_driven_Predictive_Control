@@ -1,6 +1,7 @@
 import numpy as np
 from typing import Tuple, Callable
 from scipy import linalg
+import casadi as cs
 import matplotlib.pyplot as plt
 
 def forward_euler(A, B, Ts) -> Tuple[np.ndarray]:
@@ -29,6 +30,10 @@ def zoh(A, B, Ts) -> Tuple[np.ndarray]:
 
     return Ad, Bd
 
+def runge_kutta(order: int, f: cs.Function):
+    
+    ...
+
 def hankelize(vec: np.ndarray, L: int) -> np.ndarray:
     T = vec.shape[0]
     n = vec.shape[1]
@@ -41,14 +46,23 @@ def hankelize(vec: np.ndarray, L: int) -> np.ndarray:
     
     return H
 
-def pagerize(vec: np.ndarray, L: int, spacing: int = 2) -> np.ndarray:
+def pagerize(vec: np.ndarray, L: int, S: int = None) -> np.ndarray:
     N=vec.shape[0]
     n=vec.shape[1]
+    if S > L:
+        print("Stride larger than L. Reset to L")
+        S = L
 
-    P = np.zeros([L*n, N//L])
+    k = (N-L)//S + 1
 
-    for k in range(N//L):
-        P[:, k] = vec[k*L:(k+1)*L, :, :].reshape([L*n])
+    if (N-L) % S != 0:
+        N = (k-1) * S + L
+        vec = vec[:N]
+    
+    P = np.zeros([L*n, k])
+
+    for i in range(k):
+        P[:, i] = vec[i*S:i*S+L, :, :].reshape([L*n])
 
     return P
 
@@ -104,8 +118,9 @@ class SetpointGenerator:
 
 if __name__ == "__main__":
     v = np.linspace([1, 1], [10, 10], 50)
-    H = hankelize(np.atleast_3d(v), 25)
-    P = pagerize(np.atleast_3d(v), 5)
-    print(P.shape)
+    H = hankelize(np.atleast_3d(v), 5)
+    P = pagerize(np.atleast_3d(v), 5, 2)
+    print(P.shape, H.shape)
     plt.matshow(P)
     plt.show()
+    
