@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import casadi as cs
 from casadi.tools import *
 
-from System import LinearSystem
+from System import System, LinearSystem
 from helper import hankelize, pagerize, SetpointGenerator
 
 
@@ -19,14 +19,14 @@ class Controller:
 
 
 class OpenLoop(Controller):
-    def __init__(self, model: LinearSystem) -> None:
+    def __init__(self, model: System) -> None:
         super().__init__(model)
         self.u = None
 
     def set_input_sequence(self, u: np.ndarray) -> None:
         self.u = u
 
-    def generate_rnd_input_seq(self, len: int, lbu: np.ndarray, ubu: np.ndarray, switch_prob: float = 0.05) -> None:
+    def generate_rnd_input_seq(self, len: int, lbu: np.ndarray, ubu: np.ndarray, switch_prob: float = 0.1) -> None:
         assert (lbu.shape == ubu.shape)
 
         self.u = np.zeros([len, lbu.shape[0], ubu.shape[1]])
@@ -40,7 +40,8 @@ class OpenLoop(Controller):
 
     def __call__(self, x: np.ndarray, k: int) -> np.ndarray:
         try:
-            u = self.u[k]
+            u = self.u[0]
+            self.u = np.roll(self.u, -1)
         except IndexError:
             u = np.zeros(self.u[0].shape)
         return u
@@ -79,12 +80,12 @@ class LQRController(Controller):
 
 
 class MPC(Controller):
-    def __init__(self, model: LinearSystem) -> None:
+    def __init__(self, model: System, **kwargs) -> None:
         super().__init__(model)
 
 
 class DeePC(Controller):
-    def __init__(self, model: LinearSystem, **kwargs) -> None:
+    def __init__(self, model: System, **kwargs) -> None:
         super().__init__(model)
 
         kwargs.setdefault("data_mat", "hankel")
@@ -127,7 +128,7 @@ class DeePC(Controller):
         if self.data_mat == "hankel":
             self.min_exc_len = 2 * (nu + 1) * (L + nx) - 1
         elif self.data_mat == "page":
-            self.min_exc_len = 2*L*((nu+1)*(nx+1)-1)
+            self.min_exc_len = 10*L*((nu+1)*(nx+1)-1)
 
         # Excite the system
         x0 = np.zeros([self.model.n_states, 1])
@@ -135,7 +136,8 @@ class DeePC(Controller):
             self.model.n_states, self.min_exc_len, self.model.Ts, 0, "rand", self.exct_bounds, switching_prob=0.1)
         self.model.simulate(
             x0, self.min_exc_len, control_law=self.init_ctrl, tracking_target=sp_gen())
-        self.ref = sp_gen()[:, :2]
+        self.ref = sp_gen()[:, :self.model.n_outputs]
+
 
         self.set_constraints()
         cost = self.loss()
@@ -145,7 +147,7 @@ class DeePC(Controller):
                         "g": self.traj_constraint,
                         "p": self.opt_p}
 
-        opts = {"ipopt.tol": 1e-12, "ipopt.max_iter": 100, "ipopt.print_level": 0,
+        opts = {"ipopt.tol": 1e-12, "ipopt.max_iter": 200, "ipopt.print_level": 0,
                 "expand": True, "verbose": False, "print_time": True}
 
         self.solver = nlpsol("solver", "ipopt", self.problem, opts)
@@ -197,10 +199,10 @@ class DeePC(Controller):
         optim_var = self.opti_vars
         self.lbx = optim_var(-np.inf)
         self.ubx = optim_var(np.inf)
-        self.lbx['u'] = -5.0
-        self.ubx['u'] = 5.0
-        self.lbx['y'] = np.array([[-1], [-0.3]])
-        self.ubx['y'] = np.array([[1], [0.3]])
+        self.lbx['u'] = -10.0
+        self.ubx['u'] = 10.0
+        self.lbx['y'] = np.array([[-5], [-5]])
+        self.ubx['y'] = np.array([[5], [5]])
 
     def loss(self) -> cs.MX:
         loss = 0

@@ -129,15 +129,12 @@ class NonlinearSystem(System):
         self.dynamics = self.define_dynamics()
         self.F = self.discrete_dynamics()
 
-    def discrete_dynamics(self) -> None:
+    def discrete_dynamics(self) -> cs.Function:
         DAE = {"x": self.sym_x,
                "p": self.sym_u,
                "ode": self.dynamics}
         opts = {"tf": self.Ts}
         return cs.integrator('F', 'cvodes', DAE, opts)
-
-    def define_dynamics(self) -> cs.MX:
-        ...
 
     def f(self, x0, p) -> np.ndarray:
         x_next = self.F(x0=x0, p=p)
@@ -150,6 +147,9 @@ class NonlinearSystem(System):
     def plot_phasespace(self, **pltargs) -> None:
         plt.scatter(self.x[:, 1, :], self.x[:, 0, :], s=0.1)
         plt.axis("equal")
+    
+    def define_dynamics(self) -> cs.MX:
+        ...
 
 
 class LinearSystem(System):
@@ -272,7 +272,7 @@ class VanderpolOscillator(NonlinearSystem):
 
     def define_dynamics(self) -> cs.MX:
         # system equation
-        x0_dot = (3-self.sym_x[1]**2)*self.sym_x[0] - self.sym_x[1]
+        x0_dot = (3-self.sym_x[1]**2)*self.sym_x[0] - self.sym_x[1] + self.sym_u
         x1_dot = self.sym_x[0]
 
         return cs.vertcat(x0_dot, x1_dot)
@@ -290,7 +290,7 @@ class LorenzAttractor(NonlinearSystem):
 
     def define_dynamics(self) -> cs.MX:
         # system equation
-        x0_dot = 10 * (self.sym_x[1] - self.sym_x[0])
+        x0_dot = 10 * (self.sym_x[1] - self.sym_x[0]) + self.sym_u
         x1_dot = self.sym_x[0] * (28 - self.sym_x[2]) - self.sym_x[1]
         x2_dot = self.sym_x[0] * self.sym_x[1] - 2.2 * self.sym_x[2]
 
