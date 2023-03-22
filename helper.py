@@ -80,8 +80,8 @@ class SetpointGenerator:
             trac_states = [trac_states]
             shapes = [shapes]
 
-        assert (len(trac_states) == len(shapes))
-        assert (bounds.shape[2] == len(trac_states))
+        assert len(trac_states) == len(shapes), "{0}, {1}".format(len(trac_states), len(shapes))
+        assert bounds.shape[0] == len(trac_states), "{0}, {1}".format(bounds.shape, len(trac_states))
 
         for state, shape, bound in zip(trac_states, shapes, bounds):
             sp_state = np.zeros([n_steps, 1])

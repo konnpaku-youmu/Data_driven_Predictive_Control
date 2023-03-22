@@ -29,7 +29,7 @@ class OpenLoop(Controller):
     def generate_rnd_input_seq(self, len: int, lbu: np.ndarray, ubu: np.ndarray, switch_prob: float = 0.1) -> None:
         assert (lbu.shape == ubu.shape)
 
-        self.u = np.zeros([len, lbu.shape[0], ubu.shape[1]])
+        self.u = np.ones([len, lbu.shape[0], ubu.shape[1]])
 
         for k in range(len):
             if np.random.rand() <= switch_prob:
@@ -99,10 +99,8 @@ class DeePC(Controller):
         try:
             self.Q = kwargs["Q"]
         except KeyError:
-            C = model.C
-            no = model.n_outputs
-            self.Q = C@C.T + np.eye(no, no) * 1e-2
-
+            ny = model.n_outputs
+            self.Q = np.eye(ny, ny) * 10
         try:
             self.R = kwargs["R"]
         except KeyError:
@@ -124,22 +122,28 @@ class DeePC(Controller):
         L = self.T_ini + self.N
         nx = self.model.n_states
         nu = self.model.n_inputs
+        ny = self.model.n_outputs
+
+        kwargs.setdefault("lbx", -np.inf * np.ones([ny, 1]))
+        kwargs.setdefault("ubx", np.inf * np.ones([ny, 1]))
+        kwargs.setdefault("lbu", -np.inf * np.ones([nu, 1]))
+        kwargs.setdefault("ubu", np.inf * np.ones([nu, 1]))
 
         if self.data_mat == "hankel":
-            self.min_exc_len = 2 * (nu + 1) * (L + nx) - 1
+            self.excitation_len = 2 * (nu + 1) * (L + nx) - 1
         elif self.data_mat == "page":
-            self.min_exc_len = 10*L*((nu+1)*(nx+1)-1)
+            self.excitation_len = 10*L*((nu+1)*(nx+1)-1)
 
         # Excite the system
         x0 = np.zeros([self.model.n_states, 1])
         sp_gen = SetpointGenerator(
-            self.model.n_states, self.min_exc_len, self.model.Ts, 0, "rand", self.exct_bounds, switching_prob=0.1)
+            self.model.n_states, self.excitation_len, self.model.Ts, 0, "rand", self.exct_bounds, switching_prob=0.1)
         self.model.simulate(
-            x0, self.min_exc_len, control_law=self.init_ctrl, tracking_target=sp_gen())
+            x0, self.excitation_len, control_law=self.init_ctrl, tracking_target=sp_gen())
         self.ref = sp_gen()[:, :self.model.n_outputs]
 
-
-        self.set_constraints()
+        self.set_constraints(lb_states=kwargs["lbx"], ub_states=kwargs["ubx"],
+                             lb_inputs=kwargs["lbu"], ub_inputs=kwargs["ubu"])
         cost = self.loss()
 
         self.problem = {"x": self.opti_vars,
@@ -152,7 +156,8 @@ class DeePC(Controller):
 
         self.solver = nlpsol("solver", "ipopt", self.problem, opts)
 
-    def set_constraints(self) -> None:
+    def set_constraints(self, lb_states: np.ndarray = None, ub_states: np.ndarray = None,
+                        lb_inputs: np.ndarray = None, ub_inputs: np.ndarray = None) -> None:
 
         L = self.T_ini + self.N
 
@@ -199,10 +204,10 @@ class DeePC(Controller):
         optim_var = self.opti_vars
         self.lbx = optim_var(-np.inf)
         self.ubx = optim_var(np.inf)
-        self.lbx['u'] = -10.0
-        self.ubx['u'] = 10.0
-        self.lbx['y'] = np.array([[-5], [-5]])
-        self.ubx['y'] = np.array([[5], [5]])
+        self.lbx['u'] = lb_inputs
+        self.ubx['u'] = ub_inputs
+        self.lbx['y'] = lb_states
+        self.ubx['y'] = ub_states
 
     def loss(self) -> cs.MX:
         loss = 0
@@ -210,9 +215,10 @@ class DeePC(Controller):
         for k in range(self.N):
             y_k = self.opti_vars["y", k] - self.opt_p['ref']
             u_k = self.opti_vars["u", k]
-            loss += (1/2) * sum1(y_k.T @ Q @ y_k) + (1/2) * sum1(u_k.T @ R @ u_k)
+            loss += (1/2) * sum1(y_k.T @ Q @ y_k) + \
+                (1/2) * sum1(u_k.T @ R @ u_k)
 
-        if self.model.noisy:
+        if self.model.noisy or type(self.model) != LinearSystem:
             # regularization terms
             λ_s = 120
             g = self.opti_vars["g"]
@@ -231,6 +237,7 @@ class DeePC(Controller):
             [self.ref, np.atleast_3d(r.squeeze())], axis=0)
 
     def __call__(self, x: np.ndarray, r: np.ndarray) -> np.ndarray:
+
         y_ini = self.model.y[-self.T_ini:].squeeze()
         u_ini = self.model.u[-self.T_ini:].squeeze()
         self.opt_p_num['u_ini'] = vertsplit(u_ini)
@@ -247,7 +254,7 @@ class DeePC(Controller):
 
         u = self.U_f @ opti_g
 
-        return u[0]
+        return u[:self.model.n_inputs]
 
     def plot_reference(self, **pltargs) -> None:
         pltargs.setdefault('linewidth', 1)
@@ -256,9 +263,9 @@ class DeePC(Controller):
             0, self.model.y.shape[0]*self.model.Ts, self.model.y.shape[0], endpoint=False)
 
         for i in range(self.model.n_outputs):
-            plt.step(plot_range[:self.min_exc_len],
-                     self.ref[:self.min_exc_len, i, :], **pltargs)
-            plt.step(plot_range[self.min_exc_len:], self.ref[self.min_exc_len:,
+            plt.step(plot_range[:self.excitation_len],
+                     self.ref[:self.excitation_len, i, :], **pltargs)
+            plt.step(plot_range[self.excitation_len:], self.ref[self.excitation_len:,
                      i, :], label=r"$ref_{}$".format(i), **pltargs)
 
         plt.legend()
