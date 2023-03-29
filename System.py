@@ -68,12 +68,15 @@ class System:
             self.set_initial_states(x0)
 
         for k in range(1, n_steps):
+            # if np.abs(self.y[-1, 0]) >= 5 or np.abs(self.y[-1, 1]) >= 2:
+            #     break
             uk = control_law(self.x[-1], tracking_target[k])
             self.update_u(uk)
             x_next = self.f(x0=self.x[-1], p=self.u[-1])
             self.update_x(x_next)
             yk = self.output(self.x[-1], self.u[-1]).squeeze()
             self.update_y(yk)
+            
 
     def output(self, x, u):
         ...
@@ -90,7 +93,7 @@ class System:
             0, self.y.shape[0]*self.Ts, self.y.shape[0], endpoint=False)
 
         for i in range(self.n_outputs):
-            plt.step(plot_range, self.y[:, i, :],
+            plt.plot(plot_range, self.y[:, i, :],
                      label=r"$y_{}$".format(i), **pltargs)
 
         plt.legend()
@@ -103,7 +106,7 @@ class System:
             0, self.y.shape[0]*self.Ts, self.y.shape[0], endpoint=False)
 
         for i in range(self.n_inputs):
-            plt.step(plot_range, self.u[:, i, :],
+            plt.plot(plot_range, self.u[:, i, :],
                      label=r"$u_{}$".format(i), **pltargs)
 
         plt.legend()
@@ -115,7 +118,7 @@ class NonlinearSystem(System):
         self.dynamics = None
 
     def build_system_model(self, states: cs.MX, inputs: cs.MX,
-                           outputs: cs.MX, C: np.array, **kwargs) -> None:
+                           outputs: cs.MX, C: np.array = None, **kwargs) -> None:
         # set default values for arguments
         kwargs.setdefault("noisy", False)
 
@@ -127,7 +130,7 @@ class NonlinearSystem(System):
         self.n_states = states.shape[0]
         self.n_inputs = inputs.shape[0]
         self.n_outputs = outputs.shape[0]
-        self.C = C  # output matrix
+        self.C = C if C is not None else np.eye(self.n_states)  # output matrix
         self.sym_x = states
         self.sym_u = inputs
         self.sym_y = outputs
@@ -181,6 +184,9 @@ class LinearSystem(System):
             print("Continuous dynamics")
 
         self.C, self.D = C, D
+        kwargs.setdefault("mismatch", False)
+        if kwargs["mismatch"]:
+            self.A *= 1.02
 
         self.n_states = A.shape[1]
         self.n_inputs = B.shape[1]
@@ -387,16 +393,24 @@ class Quadcopter(NonlinearSystem):
         Izz = 1e-2
         Cm = 1e4
 
-        vx, vy, vz = self.sym_x[3], self.sym_x[4], self.sym_x[5]
-        φ, θ, ψ = self.sym_x[6], self.sym_x[7], self.sym_x[8]
-        ωx, ωy, ωz = self.sym_x[9], self.sym_x[10], self.sym_x[11]
-        u1, u2, u3, u4 = self.sym_u[0], self.sym_u[1], self.sym_u[2], self.sym_u[3]
+        f_eq = m*g/(4*k*Cm)
 
+        # Vitesse -- direction x,y,z
+        vx, vy, vz = self.sym_x[3], self.sym_x[4], self.sym_x[5]
+        # Pose
+        φ, θ, ψ = self.sym_x[6], self.sym_x[7], self.sym_x[8]
+        # Vitesse angulaire
+        ωx, ωy, ωz = self.sym_x[9], self.sym_x[10], self.sym_x[11]
+
+        # Entrée du système: Voltage^2
+        u1, u2, u3, u4 = self.sym_u[0] + f_eq, self.sym_u[1] + f_eq, self.sym_u[2] + f_eq, self.sym_u[3] + f_eq
+
+        # Définir la dynamique
         ax = (-Kd/m)*vx + (k*Cm/m)*(sin(ψ)*sin(φ) +
-                                    cos(ψ)*cos(φ)*sin(θ)) * cs.sum1(self.sym_u)
+                                    cos(ψ)*cos(φ)*sin(θ)) * (u1+u2+u3+u4)
         ay = (-Kd/m)*vy + (k*Cm/m)*(cos(φ)*sin(ψ)*sin(θ) - 
-                                    cos(ψ)*sin(φ)) * cs.sum1(self.sym_u)
-        az = (-Kd/m)*vz - g + (k*Cm/m)*cos(θ)*cos(φ)*cs.sum1(self.sym_u)
+                                    cos(ψ)*sin(φ)) * (u1+u2+u3+u4)
+        az = (-Kd/m)*vz - g + (k*Cm/m)*cos(θ)*cos(φ) * (u1+u2+u3+u4)
 
         Φ = ωx + ωy*(sin(φ)*tan(θ)) + ωz*(cos(φ)*tan(θ))
         Θ = ωy * cos(φ) - ωz * sin(φ)

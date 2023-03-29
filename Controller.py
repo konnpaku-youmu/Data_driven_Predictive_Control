@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import casadi as cs
 from casadi.tools import *
 
-from System import System, LinearSystem
+from System import System, LinearSystem, Quadcopter
 from helper import hankelize, pagerize, SetpointGenerator
 
 
@@ -26,7 +26,7 @@ class OpenLoop(Controller):
     def set_input_sequence(self, u: np.ndarray) -> None:
         self.u = u
 
-    def generate_rnd_input_seq(self, len: int, lbu: np.ndarray, ubu: np.ndarray, switch_prob: float = 0.1) -> None:
+    def generate_rnd_input_seq(self, len: int, lbu: np.ndarray, ubu: np.ndarray, switch_prob: float = 0.3) -> None:
         assert (lbu.shape == ubu.shape)
 
         self.u = np.ones([len, lbu.shape[0], ubu.shape[1]])
@@ -44,6 +44,58 @@ class OpenLoop(Controller):
             self.u = np.roll(self.u, -1)
         except IndexError:
             u = np.zeros(self.u[0].shape)
+        return u
+
+class CrappyPID(Controller):
+    def __init__(self, model: System) -> None:
+        super().__init__(model)
+
+        self.I = 0
+        self.err_p = 0
+    
+    def __call__(self, x: np.ndarray, r: int) -> np.ndarray:
+        err = x - r
+        self.I += err * self.model.Ts
+        de = (err - self.err_p) / self.model.Ts
+
+        u = np.zeros([self.model.n_inputs, 1])
+
+        ex, ix, dx = err[0], self.I[0], de[0]
+        ey, iy, dy = err[1], self.I[1], de[1]
+        ez, iz, dz = err[2], self.I[2], de[2]
+
+        Kx, Ky, Kz = 0.6, 0.6, 16
+        Kix, Kiy, Kiz = 0.32, 0.32, 0.25
+        Kdx, Kdy, Kdz = 4.5, 4.5, 3.5
+
+        u -= Kz * ez + Kiz * iz + Kdz * dz
+
+        u[0] += Ky * ey + Kiy * iy + Kdy * dy
+        u[2] -= Ky * ey + Kiy * iy + Kdy * dy
+
+        u[1] -= Kx * ex + Kix * ix + Kdx * dx
+        u[3] += Kx * ex + Kix * ix + Kdx * dx
+
+        ephi, iphi, dphi = err[6], self.I[6], de[6]
+        etheta, ith, dth = err[7], self.I[7], de[7]
+        epsi, ipsi, dpsi = err[8], self.I[8], de[8]
+
+        Kphi, Ktheta, Kpsi = 7, 4.8, 3.5
+        Kiphi, Kitheta, Kipsi = 0.06, 0.15, 0.1
+        Kdphi, Kdtheta, Kdpsi = 8.5, 9, 9
+        u[0] -= Kphi * ephi + Kdphi * dphi + Kiphi * iphi
+        u[2] += Kphi * ephi + Kdphi * dphi + Kiphi * iphi
+
+        u[1] -= Ktheta * etheta + Kdtheta * dth + Kitheta * ith
+        u[3] += Ktheta * etheta + Kdtheta * dth + Kitheta * ith
+
+        u[0] -= Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi
+        u[2] -= Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi 
+        u[1] += Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi 
+        u[3] += Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi 
+
+        self.err_p = err
+
         return u
 
 
@@ -93,8 +145,11 @@ class DeePC(Controller):
         self.T_ini = kwargs["T_ini"]
         self.N = kwargs["N"]
         self.init_ctrl = kwargs["init_law"]
-        self.exct_bounds = kwargs["excitation_bounds"]
         self.data_mat = kwargs["data_mat"]
+
+        self.exct_bounds = kwargs["exc_bounds"]
+        self.exct_states = kwargs["exc_states"]
+        self.exct_shapes = kwargs["exc_shapes"]
 
         try:
             self.Q = kwargs["Q"]
@@ -105,7 +160,7 @@ class DeePC(Controller):
             self.R = kwargs["R"]
         except KeyError:
             nu = model.n_inputs
-            self.R = np.eye(nu, nu) * 0.1
+            self.R = np.eye(nu, nu) * 1e-2
 
         self.problem = None
         self.solver = None
@@ -130,14 +185,14 @@ class DeePC(Controller):
         kwargs.setdefault("ubu", np.inf * np.ones([nu, 1]))
 
         if self.data_mat == "hankel":
-            self.excitation_len = 2 * (nu + 1) * (L + nx) - 1
+            self.excitation_len = 4*(nu + 1) * (L + nx) - 1
         elif self.data_mat == "page":
             self.excitation_len = 10*L*((nu+1)*(nx+1)-1)
 
         # Excite the system
         x0 = np.zeros([self.model.n_states, 1])
         sp_gen = SetpointGenerator(
-            self.model.n_states, self.excitation_len, self.model.Ts, 0, "rand", self.exct_bounds, switching_prob=0.1)
+            self.model.n_states, self.excitation_len, self.model.Ts, self.exct_states, self.exct_shapes, self.exct_bounds, switching_prob=0.15)
         self.model.simulate(
             x0, self.excitation_len, control_law=self.init_ctrl, tracking_target=sp_gen())
         self.ref = sp_gen()[:, :self.model.n_outputs]
@@ -185,7 +240,7 @@ class DeePC(Controller):
         self.opti_vars_num = self.opti_vars(0)
         self.opt_p_num = self.opt_p(0)
 
-        if self.model.noisy:
+        if self.model.noisy or type(self.model) != LinearSystem:
             A = vertcat(U_p, Y_p, U_f)
             b = vertcat(*self.opt_p['u_ini'],
                         *self.opt_p['y_ini'],
@@ -220,14 +275,14 @@ class DeePC(Controller):
 
         if self.model.noisy or type(self.model) != LinearSystem:
             # regularization terms
-            λ_s = 120
+            λ_s = 15
             g = self.opti_vars["g"]
             Y_f = vertcat(self.Y_f)
             y = vertcat(*self.opti_vars['y'])
             meas_dev = Y_f@g - y
             loss += λ_s * cs.norm_2(meas_dev)**2
 
-            λ_g = 58
+            λ_g = 8
             loss += λ_g * cs.norm_2(g)**2
 
         return loss
