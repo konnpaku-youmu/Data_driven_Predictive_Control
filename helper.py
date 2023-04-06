@@ -95,8 +95,8 @@ class SetpointGenerator:
                 height = kwargs["height"]
                 sp_state[step_time:] = height
             elif shape == "rand":
-                kwargs.setdefault("switching_prob", 0.05)
-                switching_prob = kwargs["switching_prob"]
+                kwargs.setdefault("switch_prob", 0.05)
+                switching_prob = kwargs["switch_prob"]
 
                 for k in range(n_steps):
                     if np.random.rand() <= switching_prob:

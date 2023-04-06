@@ -1,37 +1,64 @@
 import numpy as np
 from typing import Any, Tuple, Callable
+from enum import Enum
 from scipy import linalg
 import matplotlib.pyplot as plt
 
 import casadi as cs
 from casadi.tools import *
 
-from System import System, LinearSystem, Quadcopter
+from SysModels import System, LinearSystem
 from helper import hankelize, pagerize, SetpointGenerator
 
 
-class Controller:
-    def __init__(self, model: LinearSystem) -> None:
-        self.model = model
+class SMStruct(Enum):
+    HANKEL = 0
+    PARTIAL_HANKEL = 1
+    PAGE = 2
 
-    def __call__(self, x: np.ndarray, k: int) -> np.ndarray:
-        ...
+
+class OCPType(Enum):
+    CANONICAL = 0
+    REGULARIZED = 1
+
+
+class Controller:
+    def __init__(self, model: System, **kwargs) -> None:
+        self.model = model
+        self.u = None
+
+    def __call__(self, x: np.ndarray, r: np.ndarray) -> np.ndarray:
+        raise NotImplementedError()
 
 
 class OpenLoop(Controller):
     def __init__(self, model: System) -> None:
         super().__init__(model)
-        self.u = None
 
-    def set_input_sequence(self, u: np.ndarray) -> None:
+    @classmethod
+    def given_input_seq(cls, model: System, u: np.ndarray):
+        inst = cls.__new__(cls)
+        super(OpenLoop, inst).__init__(model=model)
+        inst.__set_input_sequence(u=u)
+        return inst
+
+    @classmethod
+    def rnd_input(cls, model: System, length: int):
+        inst = cls.__new__(cls)
+        super(OpenLoop, inst).__init__(model=model)
+        inst.__rnd_input_seq(
+            length=length, lbu=model.lb_input, ubu=model.ub_input)
+        return inst
+
+    def __set_input_sequence(self, u: np.ndarray) -> None:
         self.u = u
 
-    def generate_rnd_input_seq(self, len: int, lbu: np.ndarray, ubu: np.ndarray, switch_prob: float = 0.3) -> None:
+    def __rnd_input_seq(self, length: int, lbu: np.ndarray, ubu: np.ndarray, switch_prob: float = 0.5) -> None:
         assert (lbu.shape == ubu.shape)
 
-        self.u = np.ones([len, lbu.shape[0], ubu.shape[1]])
+        self.u = np.ones([length, lbu.shape[0], ubu.shape[1]])
 
-        for k in range(len):
+        for k in range(length):
             if np.random.rand() <= switch_prob:
                 self.u[k] = np.random.uniform(
                     lbu, ubu, [lbu.shape[0], ubu.shape[1]])
@@ -39,12 +66,10 @@ class OpenLoop(Controller):
                 self.u[k] = self.u[k-1]
 
     def __call__(self, x: np.ndarray, k: int) -> np.ndarray:
-        try:
-            u = self.u[0]
-            self.u = np.roll(self.u, -1)
-        except IndexError:
-            u = np.zeros(self.u[0].shape)
+        u = self.u[0]
+        self.u = np.roll(self.u, -1)
         return u
+
 
 class CrappyPID(Controller):
     def __init__(self, model: System) -> None:
@@ -52,7 +77,7 @@ class CrappyPID(Controller):
 
         self.I = 0
         self.err_p = 0
-    
+
     def __call__(self, x: np.ndarray, r: int) -> np.ndarray:
         err = x - r
         self.I += err * self.model.Ts
@@ -90,9 +115,9 @@ class CrappyPID(Controller):
         u[3] += Ktheta * etheta + Kdtheta * dth + Kitheta * ith
 
         u[0] -= Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi
-        u[2] -= Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi 
-        u[1] += Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi 
-        u[3] += Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi 
+        u[2] -= Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi
+        u[1] += Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi
+        u[3] += Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi
 
         self.err_p = err
 
@@ -137,30 +162,25 @@ class MPC(Controller):
 
 
 class DeePC(Controller):
-    def __init__(self, model: System, **kwargs) -> None:
+    def __init__(self, model: System, T_ini: int, horizon: int, 
+                 init_law: Controller, data_mat: SMStruct = SMStruct.HANKEL, **kwargs) -> None:
         super().__init__(model)
+        
+        kwargs.setdefault("lbx", self.model.lb_output)
+        kwargs.setdefault("ubx", self.model.ub_output)
+        kwargs.setdefault("lbu", self.model.lb_input)
+        kwargs.setdefault("ubu", self.model.ub_input)
 
-        kwargs.setdefault("data_mat", "hankel")
+        kwargs.setdefault("Q", np.eye(self.model.n_outputs, self.model.n_outputs) * 10)
+        kwargs.setdefault("R", np.eye(self.model.n_inputs, self.model.n_inputs) * 1e-2)
 
-        self.T_ini = kwargs["T_ini"]
-        self.N = kwargs["N"]
-        self.init_ctrl = kwargs["init_law"]
-        self.data_mat = kwargs["data_mat"]
+        self.T_ini = T_ini
+        self.horizon = horizon
+        self.init_ctrl = init_law
+        self.sm_struct = data_mat
 
-        self.exct_bounds = kwargs["exc_bounds"]
-        self.exct_states = kwargs["exc_states"]
-        self.exct_shapes = kwargs["exc_shapes"]
-
-        try:
-            self.Q = kwargs["Q"]
-        except KeyError:
-            ny = model.n_outputs
-            self.Q = np.eye(ny, ny) * 10
-        try:
-            self.R = kwargs["R"]
-        except KeyError:
-            nu = model.n_inputs
-            self.R = np.eye(nu, nu) * 1e-2
+        self.Q = kwargs["Q"]
+        self.R = kwargs["R"]
 
         self.problem = None
         self.solver = None
@@ -172,33 +192,27 @@ class DeePC(Controller):
         self.traj_constraint = None
         self.ref = None    # Tracking reference
 
-    def build_controller(self, **kwargs) -> None:
+        self.__build_controller(**kwargs)
 
-        L = self.T_ini + self.N
+    def __build_controller(self, **kwargs) -> None:
+        L = self.T_ini + self.horizon
         nx = self.model.n_states
         nu = self.model.n_inputs
         ny = self.model.n_outputs
 
-        kwargs.setdefault("lbx", -np.inf * np.ones([ny, 1]))
-        kwargs.setdefault("ubx", np.inf * np.ones([ny, 1]))
-        kwargs.setdefault("lbu", -np.inf * np.ones([nu, 1]))
-        kwargs.setdefault("ubu", np.inf * np.ones([nu, 1]))
-
-        if self.data_mat == "hankel":
-            self.excitation_len = 4*(nu + 1) * (L + nx) - 1
-        elif self.data_mat == "page":
-            self.excitation_len = 10*L*((nu+1)*(nx+1)-1)
+        if self.sm_struct == SMStruct.HANKEL:
+            self.init_len = (nu + 1) * (L + nx) - 1
+        elif self.sm_struct == SMStruct.PAGE:
+            self.init_len = 10*L*((nu+1)*(nx+1)-1)
 
         # Excite the system
-        x0 = np.zeros([self.model.n_states, 1])
         sp_gen = SetpointGenerator(
-            self.model.n_states, self.excitation_len, self.model.Ts, self.exct_states, self.exct_shapes, self.exct_bounds, switching_prob=0.15)
-        self.model.simulate(
-            x0, self.excitation_len, control_law=self.init_ctrl, tracking_target=sp_gen())
-        self.ref = sp_gen()[:, :self.model.n_outputs]
+            nx, self.init_len, self.model.Ts, 0, "rand", np.array([[[-1], [1]]]), switching_prob=0.15)
+        self.model.simulate(self.init_len, control_law=self.init_ctrl)
+        self.ref = sp_gen()[:, :ny]
 
-        self.set_constraints(lb_states=kwargs["lbx"], ub_states=kwargs["ubx"],
-                             lb_inputs=kwargs["lbu"], ub_inputs=kwargs["ubu"])
+        self.__set_constraints(lb_states=kwargs["lbx"], ub_states=kwargs["ubx"],
+                               lb_inputs=kwargs["lbu"], ub_inputs=kwargs["ubu"])
         cost = self.loss()
 
         self.problem = {"x": self.opti_vars,
@@ -211,17 +225,17 @@ class DeePC(Controller):
 
         self.solver = nlpsol("solver", "ipopt", self.problem, opts)
 
-    def set_constraints(self, lb_states: np.ndarray = None, ub_states: np.ndarray = None,
-                        lb_inputs: np.ndarray = None, ub_inputs: np.ndarray = None) -> None:
+    def __set_constraints(self, lb_states: np.ndarray = None, ub_states: np.ndarray = None,
+                          lb_inputs: np.ndarray = None, ub_inputs: np.ndarray = None) -> None:
 
-        L = self.T_ini + self.N
+        L = self.T_ini + self.horizon
 
-        if self.data_mat == "hankel":
-            M_u = hankelize(self.model.u, L)
-            M_y = hankelize(self.model.y, L)
-        elif self.data_mat == "page":
-            M_u = pagerize(self.model.u, L, L//2-2)
-            M_y = pagerize(self.model.y, L, L//2-2)
+        if self.sm_struct == SMStruct.HANKEL:
+            M_u = hankelize(self.model.get_u(), L)
+            M_y = hankelize(self.model.get_y(), L)
+        elif self.sm_struct == SMStruct.PAGE:
+            M_u = pagerize(self.model.get_u(), L, L//2-2)
+            M_y = pagerize(self.model.get_y(), L, L//2-2)
 
         # Split Hu and Hy into Hp and Hf (ETH paper Eq.5)
         U_p, U_f = np.split(M_u, [self.model.n_inputs * self.T_ini], axis=0)
@@ -233,9 +247,9 @@ class DeePC(Controller):
                                    entry('y_ini', shape=(
                                        self.model.n_outputs), repeat=self.T_ini),
                                    entry('ref', shape=(self.model.n_outputs))])
-        self.opti_vars = struct_symMX([entry("u", shape=(self.model.n_inputs), repeat=self.N),
+        self.opti_vars = struct_symMX([entry("u", shape=(self.model.n_inputs), repeat=self.horizon),
                                        entry("y", shape=(
-                                           self.model.n_outputs), repeat=self.N),
+                                           self.model.n_outputs), repeat=self.horizon),
                                        entry("g", shape=[U_f.shape[1]])])
         self.opti_vars_num = self.opti_vars(0)
         self.opt_p_num = self.opt_p(0)
@@ -267,7 +281,8 @@ class DeePC(Controller):
     def loss(self) -> cs.MX:
         loss = 0
         Q, R, = self.Q, self.R
-        for k in range(self.N):
+
+        for k in range(self.horizon):
             y_k = self.opti_vars["y", k] - self.opt_p['ref']
             u_k = self.opti_vars["u", k]
             loss += (1/2) * sum1(y_k.T @ Q @ y_k) + \
@@ -287,18 +302,18 @@ class DeePC(Controller):
 
         return loss
 
-    def update_ref(self, r: np.ndarray) -> None:
+    def __update_ref(self, r: np.ndarray) -> None:
         self.ref = np.concatenate(
             [self.ref, np.atleast_3d(r.squeeze())], axis=0)
 
     def __call__(self, x: np.ndarray, r: np.ndarray) -> np.ndarray:
-
-        y_ini = self.model.y[-self.T_ini:].squeeze()
-        u_ini = self.model.u[-self.T_ini:].squeeze()
+        y_ini = self.model.get_y()[-self.T_ini:].squeeze()
+        u_ini = self.model.get_u()[-self.T_ini:].squeeze()
+        
         self.opt_p_num['u_ini'] = vertsplit(u_ini)
         self.opt_p_num['y_ini'] = vertsplit(y_ini)
         self.opt_p_num['ref'] = vertsplit(r.squeeze())
-        self.update_ref(r)
+        self.__update_ref(r)
 
         res = self.solver(p=self.opt_p_num, lbg=0, ubg=0,
                           lbx=self.lbx, ubx=self.ubx)
@@ -315,12 +330,12 @@ class DeePC(Controller):
         pltargs.setdefault('linewidth', 1)
 
         plot_range = np.linspace(
-            0, self.model.y.shape[0]*self.model.Ts, self.model.y.shape[0], endpoint=False)
+            0, self.model.__y.shape[0]*self.model.Ts, self.model.__y.shape[0], endpoint=False)
 
         for i in range(self.model.n_outputs):
-            plt.step(plot_range[:self.excitation_len],
-                     self.ref[:self.excitation_len, i, :], **pltargs)
-            plt.step(plot_range[self.excitation_len:], self.ref[self.excitation_len:,
+            plt.step(plot_range[:self.init_len],
+                     self.ref[:self.init_len, i, :], **pltargs)
+            plt.step(plot_range[self.init_len:], self.ref[self.init_len:,
                      i, :], label=r"$ref_{}$".format(i), **pltargs)
 
         plt.legend()
