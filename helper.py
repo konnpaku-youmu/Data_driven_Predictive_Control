@@ -4,7 +4,7 @@ from scipy import linalg
 import casadi as cs
 import matplotlib.pyplot as plt
 
-def forward_euler(A, B, Ts) -> Tuple[np.ndarray]:
+def forward_euler(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
     n_states = A.shape[1]
 
     Ad = np.eye(n_states) + Ts * A
@@ -12,7 +12,7 @@ def forward_euler(A, B, Ts) -> Tuple[np.ndarray]:
 
     return Ad, Bd
 
-def zoh(A, B, Ts) -> Tuple[np.ndarray]:
+def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
     em_upper = np.hstack((A, B))
 
     # Need to stack zeros under the a and b matrices
@@ -66,52 +66,30 @@ def pagerize(vec: np.ndarray, L: int, S: int = None) -> np.ndarray:
 
     return P
 
-class SetpointGenerator:
-    def __init__(self, n_output, n_steps, Ts,
-                 trac_states: list, shapes: list,
+class RndSetpoint:
+    def __init__(self, n_output, n_steps, trac_states: list, 
                  bounds: np.ndarray, **kwargs) -> None:
 
-        self.Ts = Ts
-        self.n_output = n_output
-        self.sim_steps = n_steps
+        kwargs.setdefault("switch_prob", 0.05)
+        switching_prob = kwargs["switch_prob"]
+
         self.sp = np.zeros([n_steps, n_output, 1])
 
-        if isinstance(trac_states, int) and isinstance(shapes, str):
+        if isinstance(trac_states, int):
             trac_states = [trac_states]
-            shapes = [shapes]
 
-        assert len(trac_states) == len(shapes), "{0}, {1}".format(len(trac_states), len(shapes))
-        assert bounds.shape[0] == len(trac_states), "{0}, {1}".format(bounds.shape, len(trac_states))
+        assert bounds.shape[0] == len(trac_states)
 
-        for state, shape, bound in zip(trac_states, shapes, bounds):
+        for state, bound in zip(trac_states, bounds):
             sp_state = np.zeros([n_steps, 1])
 
-            if shape == "ramp":
-                pass
-            elif shape == "step":
-                kwargs.setdefault("step_time", int(1/self.Ts))
-                kwargs.setdefault("height", 1)
-                step_time = kwargs["step_time"]
-                height = kwargs["height"]
-                sp_state[step_time:] = height
-            elif shape == "rand":
-                kwargs.setdefault("switch_prob", 0.05)
-                switching_prob = kwargs["switch_prob"]
-
-                for k in range(n_steps):
-                    if np.random.rand() <= switching_prob:
-                        sp_state[k] = np.random.uniform(
-                            np.min(bound), np.max(bound))
-                    else:
-                        sp_state[k] = sp_state[k-1]
+            for k in range(n_steps):
+                if np.random.rand() <= switching_prob:
+                    sp_state[k] = np.random.uniform(np.min(bound), np.max(bound))
+                else:
+                    sp_state[k] = sp_state[k-1]
 
             self.sp[:, state, :] = sp_state
-
-    def plot(self, **kwargs) -> None:
-        sim_range = np.linspace(
-            0, self.sim_steps*self.Ts, self.sim_steps, endpoint=False)
-        for i in range(self.n_output):
-            plt.step(sim_range, self.sp[:, i, :], **kwargs)
 
     def __call__(self) -> np.ndarray:
         return self.sp
@@ -123,4 +101,3 @@ if __name__ == "__main__":
     print(P.shape, H.shape)
     plt.matshow(P)
     plt.show()
-    

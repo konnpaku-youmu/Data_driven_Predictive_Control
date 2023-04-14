@@ -1,5 +1,4 @@
 import numpy as np
-from typing import Any, Tuple, Callable
 from enum import Enum
 from scipy import linalg
 import matplotlib.pyplot as plt
@@ -8,7 +7,7 @@ import casadi as cs
 from casadi.tools import *
 
 from SysModels import System, LinearSystem
-from helper import hankelize, pagerize, SetpointGenerator
+from helper import hankelize, pagerize, RndSetpoint
 
 
 class SMStruct(Enum):
@@ -25,6 +24,7 @@ class OCPType(Enum):
 class Controller:
     def __init__(self, model: System, **kwargs) -> None:
         self.model = model
+        self.closed_loop = None
         self.u = None
 
     def __call__(self, x: np.ndarray, r: np.ndarray) -> np.ndarray:
@@ -34,6 +34,7 @@ class Controller:
 class OpenLoop(Controller):
     def __init__(self, model: System) -> None:
         super().__init__(model)
+        self.closed_loop = False
 
     @classmethod
     def given_input_seq(cls, model: System, u: np.ndarray):
@@ -68,13 +69,14 @@ class OpenLoop(Controller):
     def __call__(self, x: np.ndarray, k: int) -> np.ndarray:
         u = self.u[0]
         self.u = np.roll(self.u, -1)
-        return u
+        return u, None
 
 
 class CrappyPID(Controller):
     def __init__(self, model: System) -> None:
         super().__init__(model)
 
+        self.closed_loop = True
         self.I = 0
         self.err_p = 0
 
@@ -121,13 +123,14 @@ class CrappyPID(Controller):
 
         self.err_p = err
 
-        return u
+        return u, None
 
 
 class LQRController(Controller):
     def __init__(self, model: LinearSystem, **kwargs) -> None:
         super().__init__(model)
 
+        self.closed_loop = True
         self.K = None
 
         try:
@@ -153,7 +156,7 @@ class LQRController(Controller):
         self.K = -np.linalg.inv(self.R + B.T@P@B)@B.T@P@A
 
     def __call__(self, x: np.ndarray, r: int) -> np.ndarray:
-        return self.K@(x - r)
+        return self.K@(x - r), None
 
 
 class MPC(Controller):
@@ -162,17 +165,21 @@ class MPC(Controller):
 
 
 class DeePC(Controller):
-    def __init__(self, model: System, T_ini: int, horizon: int, 
+    def __init__(self, model: System, T_ini: int, horizon: int,
                  init_law: Controller, data_mat: SMStruct = SMStruct.HANKEL, **kwargs) -> None:
         super().__init__(model)
-        
+
         kwargs.setdefault("lbx", self.model.lb_output)
         kwargs.setdefault("ubx", self.model.ub_output)
         kwargs.setdefault("lbu", self.model.lb_input)
         kwargs.setdefault("ubu", self.model.ub_input)
 
-        kwargs.setdefault("Q", np.eye(self.model.n_outputs, self.model.n_outputs) * 10)
-        kwargs.setdefault("R", np.eye(self.model.n_inputs, self.model.n_inputs) * 1e-2)
+        kwargs.setdefault("Q", np.eye(
+            self.model.n_outputs, self.model.n_outputs) * 10)
+        kwargs.setdefault("R", np.eye(
+            self.model.n_inputs, self.model.n_inputs) * 1e-2)
+
+        self.closed_loop = True
 
         self.T_ini = T_ini
         self.horizon = horizon
@@ -192,6 +199,8 @@ class DeePC(Controller):
         self.traj_constraint = None
         self.ref = None    # Tracking reference
 
+        self.objective = []
+
         self.__build_controller(**kwargs)
 
     def __build_controller(self, **kwargs) -> None:
@@ -205,11 +214,14 @@ class DeePC(Controller):
         elif self.sm_struct == SMStruct.PAGE:
             self.init_len = 10*L*((nu+1)*(nx+1)-1)
 
-        # Excite the system
-        sp_gen = SetpointGenerator(
-            nx, self.init_len, self.model.Ts, 0, "rand", np.array([[[-1], [1]]]), switching_prob=0.15)
-        self.model.simulate(self.init_len, control_law=self.init_ctrl)
-        self.ref = sp_gen()[:, :ny]
+        self.ref = np.zeros([self.init_len, ny, 1])
+        if self.init_ctrl.closed_loop:
+            cloop_sp = RndSetpoint(ny, self.init_len, 0,
+                                   np.array([[[-1], [1]]]))
+            self.ref = cloop_sp()
+
+        self.model.simulate(
+            self.init_len, control_law=self.init_ctrl, ref_traj=self.ref)
 
         self.__set_constraints(lb_states=kwargs["lbx"], ub_states=kwargs["ubx"],
                                lb_inputs=kwargs["lbu"], ub_inputs=kwargs["ubu"])
@@ -220,8 +232,12 @@ class DeePC(Controller):
                         "g": self.traj_constraint,
                         "p": self.opt_p}
 
-        opts = {"ipopt.tol": 1e-12, "ipopt.max_iter": 200, "ipopt.print_level": 0,
-                "expand": True, "verbose": False, "print_time": True}
+        opts = {"ipopt.tol": 1e-14,
+                "ipopt.max_iter": 500,
+                "ipopt.print_level": 0,
+                "expand": True,
+                "verbose": False,
+                "print_time": False}
 
         self.solver = nlpsol("solver", "ipopt", self.problem, opts)
 
@@ -286,7 +302,7 @@ class DeePC(Controller):
             y_k = self.opti_vars["y", k] - self.opt_p['ref']
             u_k = self.opti_vars["u", k]
             loss += (1/2) * sum1(y_k.T @ Q @ y_k) + \
-                (1/2) * sum1(u_k.T @ R @ u_k)
+                    (1/2) * sum1(u_k.T @ R @ u_k)
 
         if self.model.noisy or type(self.model) != LinearSystem:
             # regularization terms
@@ -309,7 +325,7 @@ class DeePC(Controller):
     def __call__(self, x: np.ndarray, r: np.ndarray) -> np.ndarray:
         y_ini = self.model.get_y()[-self.T_ini:].squeeze()
         u_ini = self.model.get_u()[-self.T_ini:].squeeze()
-        
+
         self.opt_p_num['u_ini'] = vertsplit(u_ini)
         self.opt_p_num['y_ini'] = vertsplit(y_ini)
         self.opt_p_num['ref'] = vertsplit(r.squeeze())
@@ -320,22 +336,28 @@ class DeePC(Controller):
 
         # Extract optimal solution
         self.opti_vars_num.master = res['x']
+        loss_val = res['f']
+        
         opti_g = self.opti_vars_num['g']
+
+
 
         u = self.U_f @ opti_g
 
-        return u[:self.model.n_inputs]
+        return u[:self.model.n_inputs], u[self.model.n_inputs:]
 
     def plot_reference(self, **pltargs) -> None:
         pltargs.setdefault('linewidth', 1)
 
+        y = self.model.get_y()
         plot_range = np.linspace(
-            0, self.model.__y.shape[0]*self.model.Ts, self.model.__y.shape[0], endpoint=False)
+            0, y.shape[0]*self.model.Ts, y.shape[0], endpoint=False)
 
         for i in range(self.model.n_outputs):
-            plt.step(plot_range[:self.init_len],
-                     self.ref[:self.init_len, i, :], **pltargs)
             plt.step(plot_range[self.init_len:], self.ref[self.init_len:,
                      i, :], label=r"$ref_{}$".format(i), **pltargs)
+
+        plt.fill_betweenx(np.arange(-5, 5, 0.1), 0, self.init_len*self.model.Ts,
+                          alpha=0.4, label="Init stage", color="#7F7F7F")
 
         plt.legend()

@@ -2,7 +2,7 @@ import numpy as np
 from typing import Callable
 import casadi as cs
 import matplotlib.pyplot as plt
-from helper import forward_euler, zoh, runge_kutta, SetpointGenerator
+from helper import forward_euler, zoh, runge_kutta
 
 
 class System:
@@ -14,6 +14,7 @@ class System:
         self.__x = None
         self.__y = None
         self.__u = None
+        self.__pred_x = None
         self.Ts = kwargs["Ts"]
 
         self.n_states = None
@@ -24,6 +25,9 @@ class System:
         self.noisy = None
         self.__σ_x = None  # process noise
         self.__σ_y = None  # measurement noise
+
+    def __repr__(self) -> str:
+        raise NotImplementedError()
 
     def _set_initial_states(self, x0: np.ndarray) -> None:
         assert x0.shape[0] == self.n_states
@@ -46,13 +50,6 @@ class System:
             [self.n_states, self.n_states])
         self.__σ_y = kwargs["σ_y"] if self.noisy else np.zeros(
             [self.n_outputs, self.n_outputs])
-
-    def rst(self, x0: np.ndarray) -> None:
-        self.__x = None
-        self.__y = None
-        self.__u = None
-
-        self._set_initial_states(x0)
 
     def __update_u(self, uk: np.ndarray) -> None:
         # compatibility with casadi::MX
@@ -92,7 +89,7 @@ class System:
             ref_traj = np.zeros([n_steps, self.n_outputs, 1])
 
         for k in range(n_steps):
-            uk = control_law(self.__x[-1], ref_traj[k])
+            uk, u_pred = control_law(self.__x[-1], ref_traj[k])
             x_next = self._f(x0=self.__x[-1], p=uk)
             yk = self._output(x_next, uk)
 
@@ -100,6 +97,12 @@ class System:
             self.__update_x(x_next)
             self.__update_u(uk)
             self.__update_y(yk)
+
+            # Make prediction of full horizon if using predictive controller
+            if u_pred is not None:
+                for i in range(u_pred.shape[0]):
+                    x_pred = self._f(x0=self.__x[-1], p=u_pred[i])
+
 
     def get_x(self):
         return self.__x[1:]
@@ -109,6 +112,13 @@ class System:
 
     def get_u(self):
         return self.__u[1:]
+
+    def rst(self, x0: np.ndarray) -> None:
+        self.__x = None
+        self.__y = None
+        self.__u = None
+
+        self._set_initial_states(x0)
 
     def plot_trajectory(self, **pltargs):
         pltargs.setdefault('linewidth', 1.2)
@@ -122,6 +132,7 @@ class System:
             plt.plot(plot_range, y[:, i, :],
                      label=r"$y_{}$".format(i), **pltargs)
 
+        plt.ylim(np.min(self.lb_output), np.max(self.ub_output))
         plt.legend()
 
     def plot_control_input(self, **pltargs):
@@ -142,7 +153,7 @@ class System:
 
 
 class NonlinearSystem(System):
-    def __init__(self, states: cs.MX, inputs: cs.MX, outputs: cs.MX, 
+    def __init__(self, states: cs.MX, inputs: cs.MX, outputs: cs.MX,
                  x0: np.ndarray, C: np.ndarray = None, **kwargs) -> None:
         super().__init__(**kwargs)
 
@@ -161,9 +172,13 @@ class NonlinearSystem(System):
         self._set_noise(**kwargs)
         self._set_initial_states(x0=x0)
 
+    def __repr__(self) -> str:
+        info = "Nonlinear system"
+        return info
+
     def _define_dynamics(self) -> cs.MX:
         raise NotImplementedError()
-    
+
     def __discrete_dynamics(self) -> cs.Function:
         DAE = {"x": self._sym_x,
                "p": self._sym_u,
@@ -192,8 +207,15 @@ class LinearSystem(System):
         self.n_inputs = B.shape[1]
         self.n_outputs = C.shape[0]
 
+        self.observable = None
+        self.controllable = None
+
         self._set_noise(**kwargs)
         self._set_initial_states(x0=x0)
+
+    def __repr__(self) -> str:
+        info = "Linear system"
+        return info
 
     def _f(self, x0, p) -> np.ndarray:
         x_next = self.A@x0 + self.B@p
@@ -202,3 +224,25 @@ class LinearSystem(System):
     def _output(self, x, u) -> np.ndarray:
         y = self.C @ x + self.D @ u + self._measurement_noise()
         return y
+
+    def ctrl(self) -> None:
+        A = self.A
+        B = self.B
+        n = A.shape[0]
+
+        ctrl_mat = np.hstack([B] + [np.linalg.matrix_power(A, i) @ B for i in range(1, n)])
+
+    def obsv(self) -> None:
+        A = self.A
+        C = self.C
+        n = A.shape[0]
+
+        obsv_mat = C
+        for i in range(1, n):
+            obsv_mat = np.vstack([obsv_mat, C @ np.linalg.matrix_power(A, i)])
+            rk = np.linalg.matrix_rank(obsv_mat)
+
+        if np.linalg.matrix_rank(obsv_mat) == n:
+            self.observable = True
+        else:
+            self.observable = False
