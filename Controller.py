@@ -232,12 +232,12 @@ class DeePC(Controller):
                         "g": self.traj_constraint,
                         "p": self.opt_p}
 
-        opts = {"ipopt.tol": 1e-14,
-                "ipopt.max_iter": 500,
+        opts = {"ipopt.tol": 1e-12,
+                "ipopt.max_iter": 200,
                 "ipopt.print_level": 0,
                 "expand": True,
                 "verbose": False,
-                "print_time": False}
+                "print_time": True}
 
         self.solver = nlpsol("solver", "ipopt", self.problem, opts)
 
@@ -337,16 +337,15 @@ class DeePC(Controller):
         # Extract optimal solution
         self.opti_vars_num.master = res['x']
         loss_val = res['f']
-        
         opti_g = self.opti_vars_num['g']
 
-
+        self.objective.append(loss_val)
 
         u = self.U_f @ opti_g
 
         return u[:self.model.n_inputs], u[self.model.n_inputs:]
 
-    def plot_reference(self, **pltargs) -> None:
+    def plot_reference(self, axis = None, **pltargs) -> None:
         pltargs.setdefault('linewidth', 1)
 
         y = self.model.get_y()
@@ -354,10 +353,22 @@ class DeePC(Controller):
             0, y.shape[0]*self.model.Ts, y.shape[0], endpoint=False)
 
         for i in range(self.model.n_outputs):
-            plt.step(plot_range[self.init_len:], self.ref[self.init_len:,
+            axis.step(plot_range[self.init_len:], self.ref[self.init_len:,
                      i, :], label=r"$ref_{}$".format(i), **pltargs)
 
-        plt.fill_betweenx(np.arange(-5, 5, 0.1), 0, self.init_len*self.model.Ts,
+        axis.fill_betweenx(np.arange(-5, 5, 0.1), 0, self.init_len*self.model.Ts,
                           alpha=0.4, label="Init stage", color="#7F7F7F")
 
-        plt.legend()
+        axis.legend()
+
+    def plot_loss(self, axis = None, **pltargs) -> None:
+        pltargs.setdefault("linewidth", 1)
+
+        y = self.model.get_y()
+        length = y.shape[0] - self.init_len
+        plot_range = np.linspace(
+            self.init_len*self.model.Ts, length*self.model.Ts, length, endpoint=False)
+
+        axis.semilogy(plot_range, np.array(self.objective)[:, 0, 0], label="$f$")
+        axis.set_xlim(0,  y.shape[0]*self.model.Ts)
+        axis.legend()

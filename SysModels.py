@@ -5,12 +5,6 @@ import matplotlib.pyplot as plt
 
 from SysBase import *
 
-plt.rcParams.update({
-    "text.usetex": True,
-    "font.family": "serif",
-    "font.size": 14
-})
-
 
 class SimpleHarmonic(LinearSystem):
     def __init__(self, x0: np.ndarray, **kwargs) -> None:

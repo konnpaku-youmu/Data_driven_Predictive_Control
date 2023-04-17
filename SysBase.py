@@ -15,6 +15,7 @@ class System:
         self.__y = None
         self.__u = None
         self.__pred_x = None
+        self.__pred_y = None
         self.Ts = kwargs["Ts"]
 
         self.n_states = None
@@ -66,6 +67,21 @@ class System:
         y_next = yk if type(yk) is np.ndarray else yk.full()
         self.__y = np.concatenate(
             [self.__y, np.atleast_3d(y_next.squeeze())], axis=0)
+    
+    def __set_init_pred(self) -> None:
+        self.__pred_x = np.ndarray([1, self.n_states, 1])
+        self.__pred_y = np.ndarray([1, self.n_outputs, 1])
+        
+        self.__pred_x[0] = self.__x[-1]
+        self.__pred_y[0] = self._output(self.__pred_x[0], self.__u[-1])
+
+    def __update_x_pred(self, x_pred_k: np.ndarray) -> None:
+        x_pred_next = x_pred_k if type(x_pred_k) is np.ndarray else x_pred_k.full()
+        self.__pred_x = np.concatenate([self.__pred_x, np.atleast_3d(x_pred_next.squeeze())], axis=0)
+
+    def __update_y_pred(self, y_pred_k: np.ndarray) -> None:
+        y_pred_next = y_pred_k if type(y_pred_k) is np.ndarray else y_pred_k.full()
+        self.__pred_y = np.concatenate([self.__pred_y, np.atleast_3d(y_pred_next.squeeze())], axis=0)
 
     def _measurement_noise(self) -> np.ndarray:
         mean = np.zeros(self.n_outputs)
@@ -98,11 +114,24 @@ class System:
             self.__update_u(uk)
             self.__update_y(yk)
 
-            # Make prediction of full horizon if using predictive controller
-            if u_pred is not None:
-                for i in range(u_pred.shape[0]):
-                    x_pred = self._f(x0=self.__x[-1], p=u_pred[i])
+            self.__set_init_pred()
 
+            # Make prediction of full horizon if using predictive controller
+            self.__prediction_openloop(u_pred)
+
+            if k % 10 == 0:
+                # plot open-loop prediction
+
+                ...
+
+    def __prediction_openloop(self, u_pred: np.ndarray) -> None:
+        if u_pred is not None:
+            for i in range(u_pred.shape[0]):
+                x_pred = self._f(x0=self.__pred_x[-1], p=u_pred[i])
+                y_pred = self._output(x_pred, u_pred[i])
+
+                self.__update_x_pred(x_pred)
+                self.__update_y_pred(y_pred)
 
     def get_x(self):
         return self.__x[1:]
@@ -120,7 +149,7 @@ class System:
 
         self._set_initial_states(x0)
 
-    def plot_trajectory(self, **pltargs):
+    def plot_trajectory(self, axis=None, **pltargs):
         pltargs.setdefault('linewidth', 1.2)
 
         y = self.get_y()
@@ -129,11 +158,11 @@ class System:
             0, y.shape[0]*self.Ts, y.shape[0], endpoint=False)
 
         for i in range(self.n_outputs):
-            plt.plot(plot_range, y[:, i, :],
-                     label=r"$y_{}$".format(i), **pltargs)
+            axis.plot(plot_range, y[:, i, :],
+                      label=r"$y_{}$".format(i), **pltargs)
 
-        plt.ylim(np.min(self.lb_output), np.max(self.ub_output))
-        plt.legend()
+        axis.set_ylim(np.min(self.lb_output), np.max(self.ub_output))
+        axis.legend()
 
     def plot_control_input(self, **pltargs):
         pltargs.setdefault("linewidth", 0.7)
@@ -230,7 +259,8 @@ class LinearSystem(System):
         B = self.B
         n = A.shape[0]
 
-        ctrl_mat = np.hstack([B] + [np.linalg.matrix_power(A, i) @ B for i in range(1, n)])
+        ctrl_mat = np.hstack(
+            [B] + [np.linalg.matrix_power(A, i) @ B for i in range(1, n)])
 
     def obsv(self) -> None:
         A = self.A
