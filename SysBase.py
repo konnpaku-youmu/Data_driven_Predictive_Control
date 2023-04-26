@@ -26,6 +26,9 @@ class System:
         self.noisy = None
         self.__σ_x = None  # process noise
         self.__σ_y = None  # measurement noise
+        
+        # plotting
+        self.__plot_axis = kwargs["plot_use"]
 
     def __repr__(self) -> str:
         raise NotImplementedError()
@@ -121,8 +124,7 @@ class System:
 
             if k % 10 == 0:
                 # plot open-loop prediction
-
-                ...
+                self.__plot_prediction(k)
 
     def __prediction_openloop(self, u_pred: np.ndarray) -> None:
         if u_pred is not None:
@@ -148,9 +150,23 @@ class System:
         self.__u = None
 
         self._set_initial_states(x0)
+    
+    def __plot_prediction(self, k: int, **pltargs):
+        pltargs.setdefault('color', "#4F4F4F")
+        pltargs.setdefault('linewidth', 1.5)
+        pltargs.setdefault('linestyle', '--')
+        axis = self.__plot_axis
 
-    def plot_trajectory(self, axis=None, **pltargs):
+        start = (k + 35) * self.Ts
+        end = start + self.__pred_y.shape[0] * self.Ts
+        plot_range = np.linspace(start, end, self.__pred_y.shape[0], endpoint=False)
+
+        for i in range(self.n_outputs):
+            axis.plot(plot_range, self.__pred_y[:, i, :], **pltargs)
+
+    def plot_trajectory(self, **pltargs):
         pltargs.setdefault('linewidth', 1.2)
+        axis = self.__plot_axis
 
         y = self.get_y()
 

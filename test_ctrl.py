@@ -17,9 +17,9 @@ def main():
 
     x0 = np.array([[0], [0.2], [0], [0]])
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
+    _, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
 
-    flex_joint = FlexJoint(Ts=0.05, x0=x0)
+    flex_joint = FlexJoint(Ts=0.05, x0=x0, plot_use=ax1)
     # flex_joint.obsv()
     ctrl_open = OpenLoop.rnd_input(model=flex_joint, length=n_steps)
 
@@ -36,7 +36,7 @@ def main():
                            switch_prob=0.02)
     flex_joint.simulate(n_steps, control_law=deepc, ref_traj=setpoint())
 
-    flex_joint.plot_trajectory(ax1)
+    flex_joint.plot_trajectory()
     deepc.plot_reference(ax1)
     deepc.plot_loss(ax2)
     plt.show()
