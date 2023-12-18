@@ -156,6 +156,8 @@ class LQRController(Controller):
         self.K = -np.linalg.inv(self.R + B.T@P@B)@B.T@P@A
 
     def __call__(self, x: np.ndarray, r: int) -> np.ndarray:
+        _r = np.zeros((2, 1))
+        r = np.vstack([r, _r])
         return self.K@(x - r), None
 
 
@@ -173,6 +175,8 @@ class DeePC(Controller):
         kwargs.setdefault("ubx", self.model.ub_output)
         kwargs.setdefault("lbu", self.model.lb_input)
         kwargs.setdefault("ubu", self.model.ub_input)
+        kwargs.setdefault("λ_s", 0)
+        kwargs.setdefault("λ_g", 0)
 
         kwargs.setdefault("Q", np.eye(
             self.model.n_outputs, self.model.n_outputs) * 10)
@@ -188,6 +192,8 @@ class DeePC(Controller):
 
         self.Q = kwargs["Q"]
         self.R = kwargs["R"]
+        self.λ_s = kwargs["λ_s"]
+        self.λ_g = kwargs["λ_g"]
 
         self.problem = None
         self.solver = None
@@ -306,15 +312,12 @@ class DeePC(Controller):
 
         if self.model.noisy or type(self.model) != LinearSystem:
             # regularization terms
-            λ_s = 15
             g = self.opti_vars["g"]
             Y_f = vertcat(self.Y_f)
             y = vertcat(*self.opti_vars['y'])
-            meas_dev = Y_f@g - y
-            loss += λ_s * cs.norm_2(meas_dev)**2
-
-            λ_g = 8
-            loss += λ_g * cs.norm_2(g)**2
+            esti_err = Y_f@g - y
+            loss += self.λ_s * cs.norm_2(esti_err)**2
+            loss += self.λ_g * cs.norm_2(g)**2
 
         return loss
 
@@ -342,6 +345,7 @@ class DeePC(Controller):
         self.objective.append(loss_val)
 
         u = self.U_f @ opti_g
+
 
         return u[:self.model.n_inputs], u[self.model.n_inputs:]
 

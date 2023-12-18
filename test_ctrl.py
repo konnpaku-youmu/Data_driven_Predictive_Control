@@ -1,8 +1,9 @@
 import matplotlib.pyplot as plt
-from Controller import OpenLoop, RndSetpoint, DeePC, CrappyPID
+from Controller import OpenLoop, RndSetpoint, DeePC, CrappyPID, LQRController, SMStruct
 import numpy as np
 
-from SysModels import IPNonlinear, Quadcopter, FlexJoint
+from SysModels import IPNonlinear, Quadcopter, FlexJoint, InvertedPendulum
+
 
 plt.rcParams.update({
     "text.usetex": True,
@@ -10,10 +11,46 @@ plt.rcParams.update({
     "font.size": 12
 })
 
+def InvPen():
+    T_ini = 4
+    pred_horizon = 15
+    n_steps = 200
+
+    x0 = np.array([[0.8], [-0.2], [0], [0]])
+
+    _, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
+
+    InvPenNonlinear = IPNonlinear(Ts=0.05, x0=x0, plot_use=ax1)
+    
+    Q_ini = np.array([[2, 0, 0, 0],
+                [0, 15, 0, 0],
+                [0, 0, 0, 0],
+                [0, 0, 0, 0]])
+    inv_pen_lin = InvertedPendulum(Ts=0.05, x0=x0, plot_use=ax1)
+    init_lqr = LQRController(inv_pen_lin, Q=Q_ini, R=0.001)
+
+    Q = np.array([[15, 0],
+                  [0, 65]])
+    R = np.array([[0.002]])
+    λ_s, λ_g = 15, 6
+    deepc = DeePC(model=InvPenNonlinear, T_ini=T_ini, data_mat=SMStruct.HANKEL,
+                  horizon=pred_horizon, init_law=init_lqr,
+                  Q=Q, R=R, λ_s=λ_s, λ_g=λ_g)
+
+    setpoint = RndSetpoint(InvPenNonlinear.n_outputs, n_steps, 
+                           0, np.array([[[-0.5], [0.5]]]), 
+                           switch_prob=0.02)
+    InvPenNonlinear.simulate(n_steps, control_law=deepc, ref_traj=setpoint())
+
+    InvPenNonlinear.plot_trajectory()
+    deepc.plot_reference(ax1)
+    deepc.plot_loss(ax2)
+    plt.show()
+
 def main():
     T_ini = 4
     pred_horizon = 10
-    n_steps = 500
+    n_steps = 200
 
     x0 = np.array([[0], [0.2], [0], [0]])
 
@@ -43,5 +80,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
- 
+    InvPen()

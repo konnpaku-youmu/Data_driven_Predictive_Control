@@ -122,9 +122,9 @@ class System:
             # Make prediction of full horizon if using predictive controller
             self.__prediction_openloop(u_pred)
 
-            if k % 10 == 0:
-                # plot open-loop prediction
-                self.__plot_prediction(k)
+            # if k % 10 == 0:
+            #     # plot open-loop prediction
+            #     self.__plot_prediction(k)
 
     def __prediction_openloop(self, u_pred: np.ndarray) -> None:
         if u_pred is not None:
