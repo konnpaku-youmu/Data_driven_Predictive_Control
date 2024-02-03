@@ -13,7 +13,7 @@ plt.rcParams.update({
 
 def InvPen():
     T_ini = 4
-    pred_horizon = 15
+    pred_horizon = 20
     n_steps = 200
 
     x0 = np.array([[0.8], [-0.2], [0], [0]])
@@ -22,17 +22,17 @@ def InvPen():
 
     InvPenNonlinear = IPNonlinear(Ts=0.05, x0=x0, plot_use=ax1)
     
-    Q_ini = np.array([[2, 0, 0, 0],
-                [0, 15, 0, 0],
+    Q_ini = np.array([[3.5, 0, 0, 0],
+                [0, 18, 0, 0],
                 [0, 0, 0, 0],
                 [0, 0, 0, 0]])
     inv_pen_lin = InvertedPendulum(Ts=0.05, x0=x0, plot_use=ax1)
-    init_lqr = LQRController(inv_pen_lin, Q=Q_ini, R=0.001)
+    init_lqr = LQRController(inv_pen_lin, Q=Q_ini, R=0.002)
 
-    Q = np.array([[15, 0],
-                  [0, 65]])
+    Q = np.array([[12, 0],
+                  [0, 45]])
     R = np.array([[0.002]])
-    λ_s, λ_g = 15, 6
+    λ_s, λ_g = 15, 8
     deepc = DeePC(model=InvPenNonlinear, T_ini=T_ini, data_mat=SMStruct.HANKEL,
                   horizon=pred_horizon, init_law=init_lqr,
                   Q=Q, R=R, λ_s=λ_s, λ_g=λ_g)
@@ -80,4 +80,4 @@ def main():
 
 
 if __name__ == "__main__":
-    InvPen()
+    main()

@@ -12,8 +12,8 @@ clc
 control_horizon = 1; %choose how many time steps of optimal control to apply
 N = 30;%prediction horizon
 Tini = 5; %initial condition horizon
-lambda_g = 500; %regularizer weight on g vector
-lambda_y = 100000; %regularizer weight for slack variable
+lambda_g = 55; %regularizer weight on g vector
+lambda_y = 1000; %regularizer weight for slack variable
 
 solver = 'quadprog'; %choose solver
 options = sdpsettings('solver',solver,'verbose',0);

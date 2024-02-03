@@ -218,7 +218,7 @@ class DeePC(Controller):
         if self.sm_struct == SMStruct.HANKEL:
             self.init_len = (nu + 1) * (L + nx) - 1
         elif self.sm_struct == SMStruct.PAGE:
-            self.init_len = 10*L*((nu+1)*(nx+1)-1)
+            self.init_len = 2*L*((nu+1)*(nx+1)-1)
 
         self.ref = np.zeros([self.init_len, ny, 1])
         if self.init_ctrl.closed_loop:
@@ -315,8 +315,9 @@ class DeePC(Controller):
             g = self.opti_vars["g"]
             Y_f = vertcat(self.Y_f)
             y = vertcat(*self.opti_vars['y'])
+            u_k = self.opti_vars["u", k]
             esti_err = Y_f@g - y
-            loss += self.λ_s * cs.norm_2(esti_err)**2
+            loss += self.λ_s * (cs.norm_2(esti_err)**2 + sum1(u_k.T @ R @ u_k))
             loss += self.λ_g * cs.norm_2(g)**2
 
         return loss
