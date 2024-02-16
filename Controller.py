@@ -10,6 +10,11 @@ from SysModels import System, LinearSystem
 from helper import hankelize, pagerize, RndSetpoint
 
 
+class ControllerType(Enum):
+    VANILLA = 0
+    PREDICTIVE = 1
+
+
 class SMStruct(Enum):
     HANKEL = 0
     PARTIAL_HANKEL = 1
@@ -22,6 +27,8 @@ class OCPType(Enum):
 
 
 class Controller:
+    controller_type : ControllerType = None
+
     def __init__(self, model: System, **kwargs) -> None:
         self.model = model
         self.closed_loop = None
@@ -32,6 +39,8 @@ class Controller:
 
 
 class OpenLoop(Controller):
+    controller_type = ControllerType.VANILLA
+
     def __init__(self, model: System) -> None:
         super().__init__(model)
         self.closed_loop = False
@@ -72,61 +81,8 @@ class OpenLoop(Controller):
         return u, None
 
 
-class CrappyPID(Controller):
-    def __init__(self, model: System) -> None:
-        super().__init__(model)
-
-        self.closed_loop = True
-        self.I = 0
-        self.err_p = 0
-
-    def __call__(self, x: np.ndarray, r: int) -> np.ndarray:
-        err = x - r
-        self.I += err * self.model.Ts
-        de = (err - self.err_p) / self.model.Ts
-
-        u = np.zeros([self.model.n_inputs, 1])
-
-        ex, ix, dx = err[0], self.I[0], de[0]
-        ey, iy, dy = err[1], self.I[1], de[1]
-        ez, iz, dz = err[2], self.I[2], de[2]
-
-        Kx, Ky, Kz = 0.6, 0.6, 16
-        Kix, Kiy, Kiz = 0.32, 0.32, 0.25
-        Kdx, Kdy, Kdz = 4.5, 4.5, 3.5
-
-        u -= Kz * ez + Kiz * iz + Kdz * dz
-
-        u[0] += Ky * ey + Kiy * iy + Kdy * dy
-        u[2] -= Ky * ey + Kiy * iy + Kdy * dy
-
-        u[1] -= Kx * ex + Kix * ix + Kdx * dx
-        u[3] += Kx * ex + Kix * ix + Kdx * dx
-
-        ephi, iphi, dphi = err[6], self.I[6], de[6]
-        etheta, ith, dth = err[7], self.I[7], de[7]
-        epsi, ipsi, dpsi = err[8], self.I[8], de[8]
-
-        Kphi, Ktheta, Kpsi = 7, 4.8, 3.5
-        Kiphi, Kitheta, Kipsi = 0.06, 0.15, 0.1
-        Kdphi, Kdtheta, Kdpsi = 8.5, 9, 9
-        u[0] -= Kphi * ephi + Kdphi * dphi + Kiphi * iphi
-        u[2] += Kphi * ephi + Kdphi * dphi + Kiphi * iphi
-
-        u[1] -= Ktheta * etheta + Kdtheta * dth + Kitheta * ith
-        u[3] += Ktheta * etheta + Kdtheta * dth + Kitheta * ith
-
-        u[0] -= Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi
-        u[2] -= Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi
-        u[1] += Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi
-        u[3] += Kpsi*epsi + Kdpsi * dpsi + Kipsi * ipsi
-
-        self.err_p = err
-
-        return u, None
-
-
 class LQRController(Controller):
+    controller_type = ControllerType.VANILLA
     def __init__(self, model: LinearSystem, **kwargs) -> None:
         super().__init__(model)
 
@@ -137,13 +93,13 @@ class LQRController(Controller):
             self.Q = kwargs["Q"]
         except KeyError:
             C = model.C
-            ns = model.n_states
+            ns = model.n
             self.Q = C.T@C + np.eye(ns, ns) * 1e-2
 
         try:
             self.R = kwargs["R"]
         except KeyError:
-            nu = model.n_inputs
+            nu = model.m
             self.R = np.eye(nu, nu) * 0.1
 
         self.compute_K()
@@ -156,17 +112,19 @@ class LQRController(Controller):
         self.K = -np.linalg.inv(self.R + B.T@P@B)@B.T@P@A
 
     def __call__(self, x: np.ndarray, r: int) -> np.ndarray:
-        _r = np.zeros((2, 1))
-        r = np.vstack([r, _r])
         return self.K@(x - r), None
 
 
 class MPC(Controller):
+    controller_type = ControllerType.PREDICTIVE
+    
     def __init__(self, model: System, **kwargs) -> None:
         super().__init__(model)
 
 
 class DeePC(Controller):
+    controller_type = ControllerType.PREDICTIVE
+
     def __init__(self, model: System, T_ini: int, horizon: int,
                  init_law: Controller, data_mat: SMStruct = SMStruct.HANKEL, **kwargs) -> None:
         super().__init__(model)
@@ -179,9 +137,9 @@ class DeePC(Controller):
         kwargs.setdefault("λ_g", 0)
 
         kwargs.setdefault("Q", np.eye(
-            self.model.n_outputs, self.model.n_outputs) * 10)
+            self.model.p, self.model.p) * 10)
         kwargs.setdefault("R", np.eye(
-            self.model.n_inputs, self.model.n_inputs) * 1e-2)
+            self.model.m, self.model.m) * 1e-2)
 
         self.closed_loop = True
 
@@ -211,9 +169,9 @@ class DeePC(Controller):
 
     def __build_controller(self, **kwargs) -> None:
         L = self.T_ini + self.horizon
-        nx = self.model.n_states
-        nu = self.model.n_inputs
-        ny = self.model.n_outputs
+        nx = self.model.n
+        nu = self.model.m
+        ny = self.model.p
 
         if self.sm_struct == SMStruct.HANKEL:
             self.init_len = (nu + 1) * (L + nx) - 1
@@ -227,7 +185,7 @@ class DeePC(Controller):
             self.ref = cloop_sp()
 
         self.model.simulate(
-            self.init_len, control_law=self.init_ctrl, ref_traj=self.ref)
+            self.init_len, control_law=self.init_ctrl, reference=self.ref)
 
         self.__set_constraints(lb_states=kwargs["lbx"], ub_states=kwargs["ubx"],
                                lb_inputs=kwargs["lbu"], ub_inputs=kwargs["ubu"])
@@ -260,18 +218,18 @@ class DeePC(Controller):
             M_y = pagerize(self.model.get_y(), L, L//2-2)
 
         # Split Hu and Hy into Hp and Hf (ETH paper Eq.5)
-        U_p, U_f = np.split(M_u, [self.model.n_inputs * self.T_ini], axis=0)
-        Y_p, Y_f = np.split(M_y, [self.model.n_outputs * self.T_ini], axis=0)
+        U_p, U_f = np.split(M_u, [self.model.m * self.T_ini], axis=0)
+        Y_p, Y_f = np.split(M_y, [self.model.p * self.T_ini], axis=0)
         self.Y_f = Y_f
         self.U_f = U_f
 
-        self.opt_p = struct_symMX([entry('u_ini', shape=(self.model.n_inputs), repeat=self.T_ini),
+        self.opt_p = struct_symMX([entry('u_ini', shape=(self.model.m), repeat=self.T_ini),
                                    entry('y_ini', shape=(
-                                       self.model.n_outputs), repeat=self.T_ini),
-                                   entry('ref', shape=(self.model.n_outputs))])
-        self.opti_vars = struct_symMX([entry("u", shape=(self.model.n_inputs), repeat=self.horizon),
+                                       self.model.p), repeat=self.T_ini),
+                                   entry('ref', shape=(self.model.p))])
+        self.opti_vars = struct_symMX([entry("u", shape=(self.model.m), repeat=self.horizon),
                                        entry("y", shape=(
-                                           self.model.n_outputs), repeat=self.horizon),
+                                           self.model.p), repeat=self.horizon),
                                        entry("g", shape=[U_f.shape[1]])])
         self.opti_vars_num = self.opti_vars(0)
         self.opt_p_num = self.opt_p(0)
@@ -347,26 +305,25 @@ class DeePC(Controller):
 
         u = self.U_f @ opti_g
 
+        return u[:self.model.m], u[self.model.m:]
 
-        return u[:self.model.n_inputs], u[self.model.n_inputs:]
-
-    def plot_reference(self, axis = None, **pltargs) -> None:
+    def plot_reference(self, axis=None, **pltargs) -> None:
         pltargs.setdefault('linewidth', 1)
 
         y = self.model.get_y()
         plot_range = np.linspace(
             0, y.shape[0]*self.model.Ts, y.shape[0], endpoint=False)
 
-        for i in range(self.model.n_outputs):
+        for i in range(self.model.p):
             axis.step(plot_range[self.init_len:], self.ref[self.init_len:,
-                     i, :], label=r"$ref_{}$".format(i), **pltargs)
+                                                           i, :], label=r"$ref_{}$".format(i), **pltargs)
 
         axis.fill_betweenx(np.arange(-5, 5, 0.1), 0, self.init_len*self.model.Ts,
-                          alpha=0.4, label="Init stage", color="#7F7F7F")
+                           alpha=0.4, label="Init stage", color="#7F7F7F")
 
         axis.legend()
 
-    def plot_loss(self, axis = None, **pltargs) -> None:
+    def plot_loss(self, axis=None, **pltargs) -> None:
         pltargs.setdefault("linewidth", 1)
 
         y = self.model.get_y()

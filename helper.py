@@ -93,6 +93,14 @@ class RndSetpoint:
 
     def __call__(self) -> np.ndarray:
         return self.sp
+    
+
+class Plotter:
+    
+    def __init__(self) -> None:
+        ...
+    
+
 
 if __name__ == "__main__":
     v = np.linspace([1, 1], [10, 10], 50)

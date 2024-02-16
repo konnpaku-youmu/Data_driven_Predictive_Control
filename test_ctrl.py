@@ -1,8 +1,8 @@
 import matplotlib.pyplot as plt
-from Controller import OpenLoop, RndSetpoint, DeePC, CrappyPID, LQRController, SMStruct
+from Controller import LQRController, SMStruct
 import numpy as np
 
-from SysModels import IPNonlinear, Quadcopter, FlexJoint, InvertedPendulum
+from SysModels import ActiveSuspension
 
 
 plt.rcParams.update({
@@ -11,73 +11,33 @@ plt.rcParams.update({
     "font.size": 12
 })
 
-def InvPen():
-    T_ini = 4
-    pred_horizon = 20
-    n_steps = 200
-
-    x0 = np.array([[0.8], [-0.2], [0], [0]])
-
-    _, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
-
-    InvPenNonlinear = IPNonlinear(Ts=0.05, x0=x0, plot_use=ax1)
-    
-    Q_ini = np.array([[3.5, 0, 0, 0],
-                [0, 18, 0, 0],
-                [0, 0, 0, 0],
-                [0, 0, 0, 0]])
-    inv_pen_lin = InvertedPendulum(Ts=0.05, x0=x0, plot_use=ax1)
-    init_lqr = LQRController(inv_pen_lin, Q=Q_ini, R=0.002)
-
-    Q = np.array([[12, 0],
-                  [0, 45]])
-    R = np.array([[0.002]])
-    λ_s, λ_g = 15, 8
-    deepc = DeePC(model=InvPenNonlinear, T_ini=T_ini, data_mat=SMStruct.HANKEL,
-                  horizon=pred_horizon, init_law=init_lqr,
-                  Q=Q, R=R, λ_s=λ_s, λ_g=λ_g)
-
-    setpoint = RndSetpoint(InvPenNonlinear.n_outputs, n_steps, 
-                           0, np.array([[[-0.5], [0.5]]]), 
-                           switch_prob=0.02)
-    InvPenNonlinear.simulate(n_steps, control_law=deepc, ref_traj=setpoint())
-
-    InvPenNonlinear.plot_trajectory()
-    deepc.plot_reference(ax1)
-    deepc.plot_loss(ax2)
-    plt.show()
 
 def main():
-    T_ini = 4
-    pred_horizon = 10
-    n_steps = 200
+    Ts = 0.05
+    n_steps = 100
 
-    x0 = np.array([[0], [0.2], [0], [0]])
+    x = np.array([[0.015625], [0], [-1.84e-3], [0]])
 
-    _, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
+    fig, ax1 = plt.subplots()
 
-    flex_joint = FlexJoint(Ts=0.05, x0=x0, plot_use=ax1)
-    # flex_joint.obsv()
-    ctrl_open = OpenLoop.rnd_input(model=flex_joint, length=n_steps)
+    suspension = ActiveSuspension(x0=x, plot_use=ax1, Ts=Ts)
 
-    Q = np.array([[12, 0],
-                  [0,  4]])
+    Q = np.array([[20,  0, 0, 0],
+                  [0,  100, 0, 0],
+                  [0,  0, 1, 0],
+                  [0,  0, 0, 5]])
     R = np.array([[0.01]])
-    λ_s, λ_g = 15, 8
-    deepc = DeePC(model=flex_joint, T_ini=T_ini,
-                  horizon=pred_horizon, init_law=ctrl_open,
-                  Q=Q, R=R, λ_s=λ_s, λ_g=λ_g)
 
-    setpoint = RndSetpoint(flex_joint.n_outputs, n_steps, 
-                           0, np.array([[[-2.5], [2.5]]]), 
-                           switch_prob=0.02)
-    flex_joint.simulate(n_steps, control_law=deepc, ref_traj=setpoint())
+    controller = LQRController(suspension, Q=Q, R=R)
 
-    flex_joint.plot_trajectory()
-    deepc.plot_reference(ax1)
-    deepc.plot_loss(ax2)
+    road_profile = np.zeros((n_steps, 1))
+    road_profile[30] = 2
+    road_profile[50] = 0
+
+    suspension.simulate(n_steps, control_law=None, reference=None, disturbance=road_profile)
+
+    suspension.plot_trajectory()
     plt.show()
-
 
 if __name__ == "__main__":
     main()
