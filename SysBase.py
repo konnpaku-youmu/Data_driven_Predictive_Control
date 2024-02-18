@@ -3,13 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 import casadi as cs
 import matplotlib.pyplot as plt
-from helper import forward_euler, zoh, runge_kutta
-
-
-@dataclass
-class Constraint:
-    lb: np.ndarray = None
-    ub: np.ndarray = None
+from helper import forward_euler, zoh, runge_kutta, Bound
 
 
 class System:
@@ -27,18 +21,19 @@ class System:
         self.Ts = kwargs["Ts"]
 
         # Integer invariants
-        self.n = None  # states
-        self.m = None  # inputs
-        self.m2 = None  # inputs: disturbance
-        self.p = None  # outputs
+        self.n: int = None  # states
+        self.m: int = None  # inputs
+        self.m2: int = None  # inputs: disturbance
+        self.p: int = None  # outputs
 
         # noise
-        self.noisy = None
-        self.w = None  # process noise
-        self.v = None  # measurement noise
+        self.noisy: bool = None
+        self.w: float = None  # process noise
+        self.v: float = None  # measurement noise
 
-        # plotting
-        self.__plot_axis = kwargs["plot_use"]
+        # constraints
+        self.state_constraint: Bound = Bound()
+        self.input_constraint: Bound = Bound()
 
     def __repr__(self) -> str:
         raise NotImplementedError()
@@ -49,6 +44,11 @@ class System:
         self.__x = np.ndarray([1, self.n, 1])
         self.__y = np.ndarray([1, self.p, 1])
         self.__u = np.ndarray([1, self.m, 1])
+
+        self.state_constraint.ub = np.ones((self.n, 1)) * np.infty
+        self.state_constraint.lb = -np.ones((self.n, 1)) * np.infty
+        self.input_constraint.ub = np.ones((self.m, 1)) * np.infty
+        self.input_constraint.lb = -np.ones((self.m, 1)) * np.infty
 
         self.__u[0] = np.zeros([self.m, 1])
         self.__x[0] = x0
@@ -112,11 +112,23 @@ class System:
         return np.random.multivariate_normal(mean, self.v, size=[1]).T
 
     def _f(self, x0: np.ndarray, u: np.ndarray, w: np.ndarray) -> np.ndarray:
-        # Abstract method to be overrided
+        """
+
+        ## Abstract method to be overridden
+
+        Update the system state:
+
+        * x0: Current state
+        * p:  Control input
+        * w:  External disturbance
+
+        return: New system state
+
+        """
         raise NotImplementedError()
 
     def _output(self, x: np.ndarray, u: np.ndarray) -> np.ndarray:
-        # Abstract method to be overrided
+        # Abstract method to be overridden
         raise NotImplementedError()
 
     def simulate(self,
@@ -185,7 +197,7 @@ class System:
         pltargs.setdefault('color', "#4F4F4F")
         pltargs.setdefault('linewidth', 1.5)
         pltargs.setdefault('linestyle', '--')
-        axis = self.__plot_axis
+        axis = pltargs["plot_use"]
 
         start = (k + 35) * self.Ts
         end = start + self.__pred_y.shape[0] * self.Ts
@@ -195,9 +207,8 @@ class System:
         for i in range(self.p):
             axis.plot(plot_range, self.__pred_y[:, i, :], **pltargs)
 
-    def plot_trajectory(self, **pltargs):
+    def plot_trajectory(self, *, axis: plt.Axes, **pltargs):
         pltargs.setdefault('linewidth', 1.2)
-        axis = self.__plot_axis
 
         y = self.get_y()
 
@@ -210,8 +221,9 @@ class System:
 
         # axis.set_ylim(np.min(self.lb_output), np.max(self.ub_output))
         axis.legend()
+        axis.set_xlabel(r"Time(s)")
 
-    def plot_control_input(self, **pltargs):
+    def plot_control_input(self, *, axis: plt.Axes, **pltargs):
         pltargs.setdefault("linewidth", 0.7)
         pltargs.setdefault("linestyle", '--')
         pltargs.setdefault("color", 'g')
@@ -222,10 +234,11 @@ class System:
             0, u.shape[0]*self.Ts, u.shape[0], endpoint=False)
 
         for i in range(self.m):
-            plt.plot(plot_range, u[:, i, :],
-                     label=r"$u_{}$".format(i), **pltargs)
+            axis.plot(plot_range, u[:, i, :],
+                      label=r"$u_{}$".format(i), **pltargs)
 
-        plt.legend()
+        axis.legend()
+        axis.set_xlabel(r"Time(s)")
 
 
 class NonlinearSystem(System):
@@ -298,9 +311,20 @@ class LinearSystem(System):
         return info
 
     def _f(self, x0: np.ndarray, p: np.ndarray, w: np.ndarray = None) -> np.ndarray:
+
+        assert x0.shape == (self.n, 1), "Current state vector ∈ {}".format(x0.shape)  # sanity check
+        assert p.shape == (self.m, 1), "Control vector ∈ {}".format(p.shape)  # sanity check
+        assert w.shape == (self.m2, 1), "Disturbancee vector ∈ {}".format(w.shape)  # sanity check
+
         x_next = self.A@x0 + self.B@p + self.B2@w
+
+        assert x_next.shape == (self.n, 1), "New state vector ∈ {}".format(x_next.shape)  # sanity check
+
         return x_next
 
     def _output(self, x, u) -> np.ndarray:
         y = self.C @ x + self.D @ u + self._measurement_noise()
+
+        assert y.shape == (self.p, 1)
+
         return y

@@ -7,7 +7,7 @@ import casadi as cs
 from casadi.tools import *
 
 from SysModels import System, LinearSystem
-from helper import hankelize, pagerize, RndSetpoint
+from helper import hankelize, pagerize, RndSetpoint, Bound
 
 
 class ControllerType(Enum):
@@ -27,7 +27,7 @@ class OCPType(Enum):
 
 
 class Controller:
-    controller_type : ControllerType = None
+    controller_type: ControllerType = None
 
     def __init__(self, model: System, **kwargs) -> None:
         self.model = model
@@ -83,6 +83,7 @@ class OpenLoop(Controller):
 
 class LQRController(Controller):
     controller_type = ControllerType.VANILLA
+
     def __init__(self, model: LinearSystem, **kwargs) -> None:
         super().__init__(model)
 
@@ -117,9 +118,124 @@ class LQRController(Controller):
 
 class MPC(Controller):
     controller_type = ControllerType.PREDICTIVE
-    
-    def __init__(self, model: System, **kwargs) -> None:
+
+    def __init__(self, model: System, horizon: int, **kwargs) -> None:
+
         super().__init__(model)
+
+        kwargs.setdefault("bound_state", self.model.state_constraint)
+        kwargs.setdefault("bound_input", self.model.input_constraint)
+        kwargs.setdefault("Q", np.eye(self.model.p, self.model.p) * 10)
+        kwargs.setdefault("R", np.eye(self.model.m, self.model.m) * 1e-2)
+        kwargs.setdefault("Pf", np.eye(self.model.p, self.model.p) * 10)
+
+        self.closed_loop = True
+
+        self.horizon = horizon
+
+        self.Q = kwargs["Q"]
+        self.R = kwargs["R"]
+        self.Pf = kwargs["Pf"]
+
+        self.problem = None
+        self.solver = None
+
+        self.state_bound: Bound = kwargs["bound_state"]
+        self.input_bound: Bound = kwargs["bound_input"]
+
+        self.opt_params: struct_symMX = None
+        self.opt_vars: struct_symMX = None
+        self.param_vals = None
+        self.var_vals = None
+        self.ref = None    # Tracking reference
+
+        self.solver, self.bounds = self.__build_mpc_problem()
+
+        self.objective = []
+
+    def __build_mpc_problem(self) -> None:
+
+        x0 = cs.SX.sym(f"x0", (self.model.n, 1))
+        x = x0
+
+        lb_states = self.state_bound.lb
+        ub_states = self.state_bound.ub
+        lb_inputs = self.input_bound.lb
+        ub_inputs = self.input_bound.ub
+
+        state_constraints = []
+        lbu, ubu, lbx, ubx = [], [], [], []
+        cost = 0
+
+        Q, R = self.Q, self.R
+
+        opt_params = struct_symMX([entry('x0', shape=(self.model.n, 1)),
+                                   entry('ref', shape=(self.model.p, 1))])
+
+        opt_vars = struct_symMX([entry("u", shape=(self.model.m), repeat=self.horizon)])
+
+        self.param_vals = opt_params(0)
+        self.var_vals = opt_vars(0)
+
+        x = opt_params["x0"] - opt_params["ref"]
+
+        for k in range(self.horizon):
+
+            x -= opt_params["ref"]
+            uk = opt_vars["u", k]
+
+            wk = np.zeros((self.model.m2, 1))
+
+            x = self.model._f(x, uk, wk)
+
+            state_constraints.append(x)
+            lbu.append(lb_inputs)
+            ubu.append(ub_inputs)
+            lbx.append(lb_states)
+            ubx.append(ub_states)
+
+            cost += x.T@Q@x + uk.T@R@uk
+
+        self.problem = {"x": opt_vars,  # optimized variables: input u
+                        "f": cost,
+                        "g": cs.vertcat(*state_constraints),
+                        "p": opt_params}
+
+        opts = {"ipopt.tol": 1e-12,
+                "ipopt.max_iter": 200,
+                "ipopt.print_level": 0,
+                "expand": True,
+                "verbose": False,
+                "print_time": True}
+
+        solver = nlpsol("solver", "ipopt", self.problem, opts)
+
+        bounds = dict(
+            lbx=cs.vertcat(*lbu), ubx=cs.vertcat(*ubu),
+            lbg=cs.vertcat(*lbx), ubg=cs.vertcat(*ubx)
+        )
+
+        return solver, bounds
+
+    def __update_ref(self, r: np.ndarray) -> None:
+        self.ref = np.concatenate(
+            [self.ref, np.atleast_3d(r.squeeze())], axis=0)
+
+    def __call__(self, x: np.ndarray, r: np.ndarray) -> np.ndarray:
+        self.param_vals['x0'] = x
+        self.param_vals['ref'] = vertsplit(r.squeeze())
+        # self.__update_ref(r)
+
+        res = self.solver(p=self.param_vals, **self.bounds)
+
+        # Extract optimal solution
+        self.var_vals.master = res['x']
+        loss_val = res['f']
+        opti_u = self.var_vals['u']
+
+        self.objective.append(loss_val)
+
+        return opti_u[0], opti_u[self.model.m:]
 
 
 class DeePC(Controller):

@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from Controller import LQRController, SMStruct
+from Controller import LQRController, MPC
 import numpy as np
 
 from SysModels import ActiveSuspension
@@ -13,31 +13,36 @@ plt.rcParams.update({
 
 
 def main():
-    Ts = 0.05
-    n_steps = 100
+    Ts = 0.01
+    n_steps = 200
 
-    x = np.array([[0.015625], [0], [-1.84e-3], [0]])
+    x = np.array([[0], [0], [0], [0]])
 
-    fig, ax1 = plt.subplots()
+    fig1, ax1 = plt.subplots()
+    fig2, ax2 = plt.subplots()
 
-    suspension = ActiveSuspension(x0=x, plot_use=ax1, Ts=Ts)
+    suspension = ActiveSuspension(x0=x, Ts=Ts)
 
-    Q = np.array([[20,  0, 0, 0],
-                  [0,  100, 0, 0],
-                  [0,  0, 1, 0],
-                  [0,  0, 0, 5]])
-    R = np.array([[0.01]])
+    Q = np.array([[80,   0,  0,   0],
+                  [0,  2e3,  0,   0],
+                  [0,    0, 50,   0],
+                  [0,    0,  0, 200]])
+    R = np.array([[1]])
 
-    controller = LQRController(suspension, Q=Q, R=R)
+    lqr = LQRController(suspension, Q=Q, R=R)
+    mpc = MPC(suspension, horizon=20, Q=Q, R=R)
 
     road_profile = np.zeros((n_steps, 1))
-    road_profile[30] = 2
-    road_profile[50] = 0
+    road_profile[50] = 5
+    road_profile[51] = 5
 
-    suspension.simulate(n_steps, control_law=None, reference=None, disturbance=road_profile)
+    suspension.simulate(n_steps, control_law=mpc,
+                        reference=None, disturbance=road_profile)
 
-    suspension.plot_trajectory()
+    suspension.plot_trajectory(axis=ax1)
+    suspension.plot_control_input(axis=ax2)
     plt.show()
+
 
 if __name__ == "__main__":
     main()

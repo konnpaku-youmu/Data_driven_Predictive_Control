@@ -1,5 +1,6 @@
 import numpy as np
 from typing import Tuple, Callable
+from dataclasses import dataclass
 from scipy import linalg
 import casadi as cs
 import matplotlib.pyplot as plt
@@ -65,6 +66,13 @@ def pagerize(vec: np.ndarray, L: int, S: int = None) -> np.ndarray:
         P[:, i] = vec[i*S:i*S+L, :, :].reshape([L*n])
 
     return P
+
+
+@dataclass
+class Bound:
+    lb: np.ndarray = None
+    ub: np.ndarray = None
+
 
 class RndSetpoint:
     def __init__(self, n_output, n_steps, trac_states: list, 
