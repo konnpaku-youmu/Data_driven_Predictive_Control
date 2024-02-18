@@ -32,12 +32,21 @@ class ActiveSuspension(LinearSystem):
                        [-1. ],
                        [b2/m2]])
 
-        C = np.eye(4, 4)
+        C = np.array([[1.,     0.,           0,             0],
+                      [-k1/m1, -b1/m1,      0,          b1/m1]])
 
-        D = np.zeros((4, 1))
+        D = np.array([[0.],
+                      [1/m1]])
 
         super().__init__(A, B, C, D, x0, B2, **kwargs)
+        
+        self.output_constraint.ub[1] = 3
+        self.output_constraint.lb[1] = -3
 
+        self.input_constraint.lb[0] = -2
+        self.input_constraint.ub[0] = 2
+
+        self.noisy = True
 
 class IPNonlinear(NonlinearSystem):
     def __init__(self, x0, **kwargs) -> None:

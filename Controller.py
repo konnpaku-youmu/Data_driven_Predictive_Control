@@ -56,8 +56,9 @@ class OpenLoop(Controller):
     def rnd_input(cls, model: System, length: int):
         inst = cls.__new__(cls)
         super(OpenLoop, inst).__init__(model=model)
-        inst.__rnd_input_seq(
-            length=length, lbu=model.lb_input, ubu=model.ub_input)
+        inst.__rnd_input_seq(length=length,
+                             lbu=model.input_constraint.lb,
+                             ubu=model.input_constraint.ub)
         return inst
 
     def __set_input_sequence(self, u: np.ndarray) -> None:
@@ -70,8 +71,7 @@ class OpenLoop(Controller):
 
         for k in range(length):
             if np.random.rand() <= switch_prob:
-                self.u[k] = np.random.uniform(
-                    lbu, ubu, [lbu.shape[0], ubu.shape[1]])
+                self.u[k] = np.random.uniform(-1, 1, [1, 1])
             else:
                 self.u[k] = self.u[k-1]
 
@@ -123,8 +123,8 @@ class MPC(Controller):
 
         super().__init__(model)
 
-        kwargs.setdefault("bound_state", self.model.state_constraint)
-        kwargs.setdefault("bound_input", self.model.input_constraint)
+        kwargs.setdefault("output_bound", self.model.output_constraint)
+        kwargs.setdefault("input_bound", self.model.input_constraint)
         kwargs.setdefault("Q", np.eye(self.model.p, self.model.p) * 10)
         kwargs.setdefault("R", np.eye(self.model.m, self.model.m) * 1e-2)
         kwargs.setdefault("Pf", np.eye(self.model.p, self.model.p) * 10)
@@ -140,8 +140,8 @@ class MPC(Controller):
         self.problem = None
         self.solver = None
 
-        self.state_bound: Bound = kwargs["bound_state"]
-        self.input_bound: Bound = kwargs["bound_input"]
+        self.state_bound: Bound = kwargs["output_bound"]
+        self.input_bound: Bound = kwargs["input_bound"]
 
         self.opt_params: struct_symMX = None
         self.opt_vars: struct_symMX = None
@@ -170,7 +170,7 @@ class MPC(Controller):
         Q, R = self.Q, self.R
 
         opt_params = struct_symMX([entry('x0', shape=(self.model.n, 1)),
-                                   entry('ref', shape=(self.model.p, 1))])
+                                   entry('ref', shape=(self.model.n, 1))])
 
         opt_vars = struct_symMX([entry("u", shape=(self.model.m), repeat=self.horizon)])
 
@@ -187,8 +187,9 @@ class MPC(Controller):
             wk = np.zeros((self.model.m2, 1))
 
             x = self.model._f(x, uk, wk)
+            y = self.model._output(x, uk)
 
-            state_constraints.append(x)
+            state_constraints.append(y)
             lbu.append(lb_inputs)
             ubu.append(ub_inputs)
             lbx.append(lb_states)
@@ -245,17 +246,15 @@ class DeePC(Controller):
                  init_law: Controller, data_mat: SMStruct = SMStruct.HANKEL, **kwargs) -> None:
         super().__init__(model)
 
-        kwargs.setdefault("lbx", self.model.lb_output)
-        kwargs.setdefault("ubx", self.model.ub_output)
-        kwargs.setdefault("lbu", self.model.lb_input)
-        kwargs.setdefault("ubu", self.model.ub_input)
+        kwargs.setdefault("output_bound", self.model.output_constraint)
+        kwargs.setdefault("input_bound", self.model.input_constraint)
+
         kwargs.setdefault("λ_s", 0)
         kwargs.setdefault("λ_g", 0)
 
-        kwargs.setdefault("Q", np.eye(
-            self.model.p, self.model.p) * 10)
-        kwargs.setdefault("R", np.eye(
-            self.model.m, self.model.m) * 1e-2)
+        kwargs.setdefault("Q", np.eye(self.model.p, self.model.p) * 10)
+        kwargs.setdefault("R", np.eye(self.model.m, self.model.m) * 1e-2)
+        kwargs.setdefault("Pf", np.eye(self.model.p, self.model.p) * 10)
 
         self.closed_loop = True
 
@@ -266,14 +265,15 @@ class DeePC(Controller):
 
         self.Q = kwargs["Q"]
         self.R = kwargs["R"]
+        self.Pf = kwargs["Pf"]
         self.λ_s = kwargs["λ_s"]
         self.λ_g = kwargs["λ_g"]
 
+        self.output_bound: Bound = kwargs["output_bound"]
+        self.input_bound: Bound = kwargs["input_bound"]
+
         self.problem = None
         self.solver = None
-        self.lbx = None
-        self.ubx = None
-
         self.opt_p = None  # Trajectory constraint: RHS()
         self.opti_vars = None
         self.traj_constraint = None
@@ -301,10 +301,9 @@ class DeePC(Controller):
             self.ref = cloop_sp()
 
         self.model.simulate(
-            self.init_len, control_law=self.init_ctrl, reference=self.ref)
+            self.init_len, control_law=self.init_ctrl, reference=None)
 
-        self.__set_constraints(lb_states=kwargs["lbx"], ub_states=kwargs["ubx"],
-                               lb_inputs=kwargs["lbu"], ub_inputs=kwargs["ubu"])
+        self.__set_constraints()
         cost = self.loss()
 
         self.problem = {"x": self.opti_vars,
@@ -321,8 +320,7 @@ class DeePC(Controller):
 
         self.solver = nlpsol("solver", "ipopt", self.problem, opts)
 
-    def __set_constraints(self, lb_states: np.ndarray = None, ub_states: np.ndarray = None,
-                          lb_inputs: np.ndarray = None, ub_inputs: np.ndarray = None) -> None:
+    def __set_constraints(self) -> None:
 
         L = self.T_ini + self.horizon
 
@@ -367,12 +365,12 @@ class DeePC(Controller):
 
         # input constraints and output constraints
         optim_var = self.opti_vars
+
         self.lbx = optim_var(-np.inf)
         self.ubx = optim_var(np.inf)
-        self.lbx['u'] = lb_inputs
-        self.ubx['u'] = ub_inputs
-        self.lbx['y'] = lb_states
-        self.ubx['y'] = ub_states
+
+        self.lbx['u'], self.ubx['u'] = self.input_bound.lb, self.input_bound.ub
+        self.lbx['y'], self.ubx['y'] = self.output_bound.lb, self.output_bound.ub
 
     def loss(self) -> cs.MX:
         loss = 0

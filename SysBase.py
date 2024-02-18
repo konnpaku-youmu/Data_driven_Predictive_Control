@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Any
 from dataclasses import dataclass
 import numpy as np
 import casadi as cs
@@ -32,7 +32,7 @@ class System:
         self.v: float = None  # measurement noise
 
         # constraints
-        self.state_constraint: Bound = Bound()
+        self.output_constraint: Bound = Bound()
         self.input_constraint: Bound = Bound()
 
     def __repr__(self) -> str:
@@ -45,8 +45,8 @@ class System:
         self.__y = np.ndarray([1, self.p, 1])
         self.__u = np.ndarray([1, self.m, 1])
 
-        self.state_constraint.ub = np.ones((self.n, 1)) * np.infty
-        self.state_constraint.lb = -np.ones((self.n, 1)) * np.infty
+        self.output_constraint.ub = np.ones((self.p, 1)) * np.infty
+        self.output_constraint.lb = -np.ones((self.p, 1)) * np.infty
         self.input_constraint.ub = np.ones((self.m, 1)) * np.infty
         self.input_constraint.lb = -np.ones((self.m, 1)) * np.infty
 
@@ -160,7 +160,7 @@ class System:
         for k in range(n_steps):
             # TODO: Measurement
             uk, u_pred = control_law(self.__x[-1], reference[k])
-            x_next = self._f(x0=self.__x[-1], p=uk, w=disturbance[[k]])
+            x_next = self._f(x0=self.__x[-1], p=uk, w=disturbance[k])
             yk = self._output(x_next, uk)
 
             # Time update
@@ -207,15 +207,22 @@ class System:
         for i in range(self.p):
             axis.plot(plot_range, self.__pred_y[:, i, :], **pltargs)
 
-    def plot_trajectory(self, *, axis: plt.Axes, **pltargs):
+    def plot_trajectory(self,
+                        *,
+                        axis: plt.Axes,
+                        states: list,
+                        **pltargs):
         pltargs.setdefault('linewidth', 1.2)
+
+        if states == Any or states == None:
+            states = range(self.p)
 
         y = self.get_y()
 
         plot_range = np.linspace(
             0, y.shape[0]*self.Ts, y.shape[0], endpoint=False)
 
-        for i in range(self.p):
+        for i in states:
             axis.plot(plot_range, y[:, i, :],
                       label=r"$y_{}$".format(i), **pltargs)
 
@@ -314,7 +321,7 @@ class LinearSystem(System):
 
         assert x0.shape == (self.n, 1), "Current state vector ∈ {}".format(x0.shape)  # sanity check
         assert p.shape == (self.m, 1), "Control vector ∈ {}".format(p.shape)  # sanity check
-        assert w.shape == (self.m2, 1), "Disturbancee vector ∈ {}".format(w.shape)  # sanity check
+        assert w.shape == (self.m2, 1), "Disturbance vector ∈ {}".format(w.shape)  # sanity check
 
         x_next = self.A@x0 + self.B@p + self.B2@w
 
@@ -323,8 +330,8 @@ class LinearSystem(System):
         return x_next
 
     def _output(self, x, u) -> np.ndarray:
-        y = self.C @ x + self.D @ u + self._measurement_noise()
 
+        y = self.C @ x + self.D @ u
         assert y.shape == (self.p, 1)
 
         return y
