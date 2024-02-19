@@ -20,15 +20,15 @@ def main():
 
     x = np.array([[0], [0], [0], [0]])
 
-    fig1, ax1 = plt.subplots()
-    fig2, ax2 = plt.subplots()
+    # fig1, ax1 = plt.subplots()
+    # fig2, ax2 = plt.subplots()
 
     suspension = ActiveSuspension(x0=x, Ts=Ts)
 
-    Q = np.array([[20,   0,  0,   0],
-                  [0,   500,  0,   0],
-                  [0,    0, 100,   0],
-                  [0,    0,  0, 50]])
+    Q = np.array([[200,   0,  0,   0],
+                  [0,   850,  0,  0],
+                  [0,    0, 100,  0],
+                  [0,    0,  0, 100]])
     R = np.array([[0.01]])
 
     profile, d_profile = generate_road_profile(dist, n_steps, Ts)
@@ -36,9 +36,9 @@ def main():
     lqr = LQRController(suspension, Q=Q, R=R)
     mpc = MPC(suspension, horizon=5, Q=Q, R=R)
 
-    suspension.simulate(n_steps, control_law=None,
-                        reference=None, disturbance=d_profile)
-    suspension.plot_trajectory(axis=ax1, states=[1])
+    # suspension.simulate(n_steps, control_law=None,
+    #                     reference=None, disturbance=d_profile)
+    # suspension.plot_trajectory(axis=ax1, states=[1])
 
     # suspension.rst(x)
     # suspension.simulate(n_steps, control_law=lqr,
@@ -49,22 +49,38 @@ def main():
     # suspension.simulate(n_steps, control_law=mpc,
     #                     reference=None, disturbance=d_profile)
     # suspension.plot_trajectory(axis=ax1, states=[1])
-    suspension.rst(x)
-    λ_s, λ_g = 15, 25
-    excitation = OpenLoop.rnd_input(suspension, n_steps)
-    dpc = DeePC(suspension, 4, 10, excitation, λ_s=λ_s, λ_g=λ_g)
 
-    suspension.simulate(n_steps,
-                        control_law=dpc,
-                        reference=None,
-                        disturbance=d_profile)
+    λs_range = np.linspace(1, 10, 5)
+    λg_range = np.linspace(10, 20, 5)
 
-    suspension.plot_trajectory(axis=ax1, states=[1])
+    loss_map = np.zeros((λs_range.shape[0], λg_range.shape[0]), dtype=np.float64)
 
-    ax1.plot(np.linspace(0, t_sim, n_steps), profile[:-1])
-    suspension.plot_control_input(axis=ax2)
+    for i, λ_s in enumerate(λs_range):
+        print(i)
+        for j, λ_g in enumerate(λg_range):
+            suspension.rst(x)
+            excitation = OpenLoop.rnd_input(suspension, n_steps)
+            dpc = DeePC(suspension, 4, 10, excitation, λ_s=λ_s, λ_g=λ_g)
 
-    plt.show()
+            suspension.simulate(n_steps,
+                                control_law=dpc,
+                                reference=None,
+                                disturbance=d_profile)
+            
+
+            loss_map[i,j] = dpc.get_total_loss()
+    
+    loss_map[loss_map>1e6] = np.nan
+
+    np.save("loss_map.npy", loss_map)
+
+    # suspension.plot_trajectory(axis=ax1, states=[1])
+
+    # ax1.plot(np.linspace(0, t_sim, n_steps), profile[:-1])
+    # suspension.plot_control_input(axis=ax2)
+
+    # plt.matshow(loss_map)
+    # plt.show()
 
 
 if __name__ == "__main__":

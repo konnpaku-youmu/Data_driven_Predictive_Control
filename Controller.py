@@ -316,7 +316,7 @@ class DeePC(Controller):
                 "ipopt.print_level": 0,
                 "expand": True,
                 "verbose": False,
-                "print_time": True}
+                "print_time": False}
 
         self.solver = nlpsol("solver", "ipopt", self.problem, opts)
 
@@ -420,6 +420,9 @@ class DeePC(Controller):
         u = self.U_f @ opti_g
 
         return u[:self.model.m], u[self.model.m:]
+
+    def get_total_loss(self):
+        return np.sum(np.array(self.objective))
 
     def plot_reference(self, axis=None, **pltargs) -> None:
         pltargs.setdefault('linewidth', 1)
