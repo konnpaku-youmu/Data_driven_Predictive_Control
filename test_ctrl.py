@@ -50,8 +50,8 @@ def main():
     #                     reference=None, disturbance=d_profile)
     # suspension.plot_trajectory(axis=ax1, states=[1])
 
-    λs_range = np.linspace(1, 10, 5)
-    λg_range = np.linspace(10, 20, 5)
+    λs_range = np.linspace(1, 30, 20)
+    λg_range = np.linspace(1, 30, 20)
 
     loss_map = np.zeros((λs_range.shape[0], λg_range.shape[0]), dtype=np.float64)
 
@@ -79,8 +79,8 @@ def main():
     # ax1.plot(np.linspace(0, t_sim, n_steps), profile[:-1])
     # suspension.plot_control_input(axis=ax2)
 
-    # plt.matshow(loss_map)
-    # plt.show()
+    plt.matshow(loss_map)
+    plt.show()
 
 
 if __name__ == "__main__":
