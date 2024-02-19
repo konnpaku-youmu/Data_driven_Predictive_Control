@@ -1,5 +1,6 @@
 *.pyc
 *.asv
+*.npy
 .vscode
 examples/*
 toy_example/*

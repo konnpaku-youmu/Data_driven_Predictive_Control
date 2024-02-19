@@ -50,8 +50,8 @@ def main():
     #                     reference=None, disturbance=d_profile)
     # suspension.plot_trajectory(axis=ax1, states=[1])
 
-    λs_range = np.linspace(1, 40, 100)
-    λg_range = np.linspace(1, 40, 100)
+    λs_range = np.linspace(0, 1, 200)
+    λg_range = np.linspace(0, 1, 200)
 
     print((λs_range.shape[0], λg_range.shape[0]))
 
@@ -72,7 +72,7 @@ def main():
 
             loss_map[i,j] = dpc.get_total_loss()
     
-    loss_map[loss_map>1e6] = np.nan
+    loss_map = np.log10(loss_map)
 
     np.save("loss_map.npy", loss_map)
 
@@ -86,4 +86,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    map = np.load("loss_map.npy")
+    map = np.ma.array(map, mask=np.isnan(map))
+    plt.imshow(np.log10(map))
+    plt.show()
