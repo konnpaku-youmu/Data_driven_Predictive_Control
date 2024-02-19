@@ -57,7 +57,7 @@ def main():
 
     iter_pairs = list(zip(range(λs_range.shape[0]), λs_range))
 
-    pool = Pool(processes=40)
+    pool = Pool(processes=2)
 
     sims = partial(sim_parellel, n_steps=n_steps, x=x, Ts=Ts,
                    d_profile=d_profile)
