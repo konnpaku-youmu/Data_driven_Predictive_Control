@@ -26,7 +26,7 @@ def main():
     # fig1, ax1 = plt.subplots()
     # fig2, ax2 = plt.subplots()
 
-    suspension = ActiveSuspension(x0=x, Ts=Ts)
+    # suspension = ActiveSuspension(x0=x, Ts=Ts)
 
     Q = np.array([[200,   0,  0,   0],
                   [0,   850,  0,  0],
@@ -36,8 +36,8 @@ def main():
 
     profile, d_profile = generate_road_profile(dist, n_steps, Ts)
 
-    lqr = LQRController(suspension, Q=Q, R=R)
-    mpc = MPC(suspension, horizon=5, Q=Q, R=R)
+    # lqr = LQRController(suspension, Q=Q, R=R)
+    # mpc = MPC(suspension, horizon=5, Q=Q, R=R)
 
     # suspension.simulate(n_steps, control_law=None,
     #                     reference=None, disturbance=d_profile)
@@ -53,16 +53,18 @@ def main():
     #                     reference=None, disturbance=d_profile)
     # suspension.plot_trajectory(axis=ax1, states=[1])
 
-    λs_range = np.linspace(0, 1, 50)
-    λg_range = np.linspace(0, 1, 50)
+    λs_range = np.linspace(0, 1, 10)
+    λg_range = np.linspace(0, 1, 10)
 
     print((λs_range.shape[0], λg_range.shape[0]))
 
     iter_pairs = list(zip(range(λs_range.shape[0]), λs_range))
 
-    pool = Pool(processes=48)
+    print(iter_pairs)
 
-    sims = partial(sim_parellel, n_steps=n_steps, x=x, suspension=suspension,
+    pool = Pool(processes=4)
+
+    sims = partial(sim_parellel, n_steps=n_steps, x=x, Ts=Ts,
                    d_profile=d_profile, λg_range=λg_range)
 
     result = pool.map(sims, iter_pairs)
@@ -85,11 +87,14 @@ def main():
     plt.show()
 
 
-def sim_parellel(iter_pair, *, n_steps, x, suspension, d_profile, λg_range):
+def sim_parellel(iter_pair, *, n_steps, x, Ts, d_profile, λg_range):
     i, λ_s = iter_pair[0], iter_pair[1]
-    print(i)
+    print(i, λ_s)
+
+    suspension = ActiveSuspension(x0=x, Ts=Ts)
     
     loss_map = np.zeros((1, λg_range.shape[0]), dtype=np.float64)
+    print(loss_map.shape)
 
     for j, λ_g in enumerate(λg_range):
         suspension.rst(x)
