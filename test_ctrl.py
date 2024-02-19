@@ -50,8 +50,8 @@ def main():
     #                     reference=None, disturbance=d_profile)
     # suspension.plot_trajectory(axis=ax1, states=[1])
 
-    λs_range = np.linspace(1, 30, 20)
-    λg_range = np.linspace(1, 30, 20)
+    λs_range = np.linspace(1, 40, 25)
+    λg_range = np.linspace(1, 40, 25)
 
     loss_map = np.zeros((λs_range.shape[0], λg_range.shape[0]), dtype=np.float64)
 
