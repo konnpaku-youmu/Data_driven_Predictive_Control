@@ -55,8 +55,8 @@ def main():
     #                     reference=None, disturbance=d_profile)
     # suspension.plot_trajectory(axis=ax1, states=[1])
 
-    λs_range = np.linspace(2, 5, 200)
-    λg_range = np.linspace(2, 5, 200)
+    λs_range = np.linspace(2, 5, 100)
+    λg_range = np.linspace(2, 5, 100)
 
     iter_pairs = list(zip(range(λs_range.shape[0]), λs_range))
 
