@@ -53,8 +53,8 @@ def main():
     #                     reference=None, disturbance=d_profile)
     # suspension.plot_trajectory(axis=ax1, states=[1])
 
-    λs_range = np.linspace(0, 1, 200)
-    λg_range = np.linspace(0, 1, 200)
+    λs_range = np.linspace(0, 1, 50)
+    λg_range = np.linspace(0, 1, 50)
 
     print((λs_range.shape[0], λg_range.shape[0]))
 
