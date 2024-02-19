@@ -53,18 +53,21 @@ def main():
     #                     reference=None, disturbance=d_profile)
     # suspension.plot_trajectory(axis=ax1, states=[1])
 
-    λs_range = np.linspace(0, 10, 20)
+    λs_range = np.linspace(0, 1, 100)
+    λg_range = np.linspace(0, 1, 100)
 
     iter_pairs = list(zip(range(λs_range.shape[0]), λs_range))
 
-    pool = Pool(processes=2)
+    pool = Pool(processes=40)
 
     sims = partial(sim_parellel, n_steps=n_steps, x=x, Ts=Ts,
-                   d_profile=d_profile)
+                   d_profile=d_profile, λg_range=λg_range)
 
     result = pool.map(sims, iter_pairs)
 
-    loss_map = np.zeros((λs_range.shape[0], λs_range.shape[0]), dtype=np.float64)
+    print(result)
+
+    loss_map = np.zeros((λs_range.shape[0], λg_range.shape[0]), dtype=np.float64)
     
     for i, m in result:
         loss_map[i, :] = m
@@ -82,17 +85,18 @@ def main():
     plt.show()
 
 
-def sim_parellel(iter_pair, *, n_steps, x, Ts, d_profile):
+def sim_parellel(iter_pair, *, n_steps, x, Ts, d_profile, λg_range):
     i, λ_s = iter_pair[0], iter_pair[1]
-    print(i, "Started")
+    print(i, "Start")
 
-    λg_range = np.linspace(0, 10, 20)
+    
+    suspension = ActiveSuspension(x0=x, Ts=Ts)
+    print(suspension)
 
     loss_map = np.zeros((1, λg_range.shape[0]), dtype=np.float64)
 
     for j, λ_g in enumerate(λg_range):
-        suspension = ActiveSuspension(x0=x, Ts=Ts)
-        
+
         excitation = OpenLoop.rnd_input(suspension, n_steps)
         dpc = DeePC(suspension, 4, 10, excitation, λ_s=λ_s, λ_g=λ_g)
 
@@ -101,7 +105,8 @@ def sim_parellel(iter_pair, *, n_steps, x, Ts, d_profile):
                             reference=None,
                             disturbance=d_profile)
 
-        loss_map[0, j] = dpc.get_total_loss()
+        loss_map[:, j] = dpc.get_total_loss()
+    
     print(i, "Finished")
     return i, loss_map
 
