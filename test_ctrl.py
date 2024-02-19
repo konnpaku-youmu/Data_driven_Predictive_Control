@@ -55,8 +55,8 @@ def main():
     #                     reference=None, disturbance=d_profile)
     # suspension.plot_trajectory(axis=ax1, states=[1])
 
-    λs_range = np.linspace(2, 5, 100)
-    λg_range = np.linspace(2, 5, 100)
+    λs_range = np.linspace(1, 40, 200)
+    λg_range = np.linspace(1, 40, 200)
 
     iter_pairs = list(zip(range(λs_range.shape[0]), λs_range))
 
@@ -66,16 +66,14 @@ def main():
 
     result = [r.get() for r in result_obj]
 
-    print(result)
-
     loss_map = np.zeros((λs_range.shape[0], λg_range.shape[0]), dtype=np.float64)
     
     for i, m in result:
         loss_map[i, :] = m
 
-    loss_map = np.log10(loss_map)
-
     np.save("loss_map.npy", loss_map)
+
+    loss_map = np.log10(loss_map)
 
     # suspension.plot_trajectory(axis=ax1, states=[1])
 
