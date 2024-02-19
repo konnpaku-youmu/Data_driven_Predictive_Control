@@ -53,12 +53,12 @@ def main():
     #                     reference=None, disturbance=d_profile)
     # suspension.plot_trajectory(axis=ax1, states=[1])
 
-    λs_range = np.linspace(0, 1, 50)
-    λg_range = np.linspace(0, 1, 50)
+    λs_range = np.linspace(1, 5, 10)
+    λg_range = np.linspace(1, 5, 10)
 
     iter_pairs = list(zip(range(λs_range.shape[0]), λs_range))
 
-    pool = Pool(processes=48)
+    pool = Pool(processes=4)
 
     sims = partial(sim_parellel, n_steps=n_steps, x=x, Ts=Ts,
                    d_profile=d_profile, λg_range=λg_range)
