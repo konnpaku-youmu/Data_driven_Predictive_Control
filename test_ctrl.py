@@ -3,6 +3,9 @@ from helper import generate_road_profile
 from Controller import LQRController, MPC, OpenLoop, DeePC
 import numpy as np
 
+from multiprocessing import Pool, freeze_support
+from functools import partial
+
 from SysModels import ActiveSuspension
 
 
@@ -55,23 +58,20 @@ def main():
 
     print((λs_range.shape[0], λg_range.shape[0]))
 
+    iter_pairs = list(zip(range(λs_range.shape[0]), λs_range))
+
+    pool = Pool(processes=48)
+
+    sims = partial(sim_parellel, n_steps=n_steps, x=x, suspension=suspension,
+                   d_profile=d_profile, λg_range=λg_range)
+
+    result = pool.map(sims, iter_pairs)
+
     loss_map = np.zeros((λs_range.shape[0], λg_range.shape[0]), dtype=np.float64)
-
-    for i, λ_s in enumerate(λs_range):
-        print(i)
-        for j, λ_g in enumerate(λg_range):
-            suspension.rst(x)
-            excitation = OpenLoop.rnd_input(suspension, n_steps)
-            dpc = DeePC(suspension, 4, 10, excitation, λ_s=λ_s, λ_g=λ_g)
-
-            suspension.simulate(n_steps,
-                                control_law=dpc,
-                                reference=None,
-                                disturbance=d_profile)
-            
-
-            loss_map[i,j] = dpc.get_total_loss()
     
+    for i, m in result:
+        loss_map[i, :] = m
+
     loss_map = np.log10(loss_map)
 
     np.save("loss_map.npy", loss_map)
@@ -83,6 +83,27 @@ def main():
 
     plt.matshow(loss_map)
     plt.show()
+
+
+def sim_parellel(iter_pair, *, n_steps, x, suspension, d_profile, λg_range):
+    i, λ_s = iter_pair[0], iter_pair[1]
+    print(i)
+    
+    loss_map = np.zeros((1, λg_range.shape[0]), dtype=np.float64)
+
+    for j, λ_g in enumerate(λg_range):
+        suspension.rst(x)
+        excitation = OpenLoop.rnd_input(suspension, n_steps)
+        dpc = DeePC(suspension, 4, 10, excitation, λ_s=λ_s, λ_g=λ_g)
+
+        suspension.simulate(n_steps,
+                            control_law=dpc,
+                            reference=None,
+                            disturbance=d_profile)
+
+        loss_map[0, j] = dpc.get_total_loss()
+    
+    return i, loss_map
 
 
 if __name__ == "__main__":
