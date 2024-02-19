@@ -314,7 +314,7 @@ class LinearSystem(System):
         self._set_initial_states(x0=x0)
 
     def __repr__(self) -> str:
-        info = "Linear system at {}".format(hex(id(self)))
+        info = "Linear system at"
         return info
 
     def _f(self, x0: np.ndarray, p: np.ndarray, w: np.ndarray = None) -> np.ndarray:

@@ -3,7 +3,7 @@ from helper import generate_road_profile
 from Controller import LQRController, MPC, OpenLoop, DeePC
 import numpy as np
 
-from multiprocessing import Pool, freeze_support
+from multiprocessing import Pool, Lock, Manager
 from functools import partial
 
 from SysModels import ActiveSuspension
@@ -53,17 +53,18 @@ def main():
     #                     reference=None, disturbance=d_profile)
     # suspension.plot_trajectory(axis=ax1, states=[1])
 
-    λs_range = np.linspace(1, 5, 10)
-    λg_range = np.linspace(1, 5, 10)
+    λs_range = np.linspace(2, 5, 50)
+    λg_range = np.linspace(2, 5, 50)
 
     iter_pairs = list(zip(range(λs_range.shape[0]), λs_range))
 
-    pool = Pool(processes=4)
+    pool = Pool(processes=20)
+    m = Manager()
+    lock = m.Lock()
 
-    sims = partial(sim_parellel, n_steps=n_steps, x=x, Ts=Ts,
-                   d_profile=d_profile, λg_range=λg_range)
+    result_obj = [pool.apply_async(sim_parellel, args=(iter_p, n_steps, x, Ts, d_profile, λg_range, lock)) for iter_p in iter_pairs]
 
-    result = pool.map(sims, iter_pairs)
+    result = [r.get() for r in result_obj]
 
     print(result)
 
@@ -85,28 +86,30 @@ def main():
     plt.show()
 
 
-def sim_parellel(iter_pair, *, n_steps, x, Ts, d_profile, λg_range):
-    i, λ_s = iter_pair[0], iter_pair[1]
-    print(i, "Start")
-
-    suspension = ActiveSuspension(x0=x, Ts=Ts)
-    print(suspension)
-
-    loss_map = np.zeros((1, λg_range.shape[0]), dtype=np.float64)
-
-    for j, λ_g in enumerate(λg_range):
-
-        excitation = OpenLoop.rnd_input(suspension, n_steps)
-        dpc = DeePC(suspension, 4, 10, excitation, λ_s=λ_s, λ_g=λ_g)
-
-        suspension.simulate(n_steps,
-                            control_law=dpc,
-                            reference=None,
-                            disturbance=d_profile)
-
-        loss_map[:, j] = dpc.get_total_loss()
+def sim_parellel(iter_pair, n_steps, x, Ts, d_profile, λg_range, l):
     
-    print(i, "Finished")
+    with l:
+        i, λ_s = iter_pair[0], iter_pair[1]
+        print(i, "Start")
+
+        loss_map = np.zeros((1, λg_range.shape[0]), dtype=np.float64)
+
+        for j, λ_g in enumerate(λg_range):
+            
+            suspension = ActiveSuspension(x0=x, Ts=Ts)
+
+            excitation = OpenLoop.rnd_input(suspension, n_steps)
+            dpc = DeePC(suspension, 4, 10, excitation, λ_s=λ_s, λ_g=λ_g)
+
+            suspension.simulate(n_steps,
+                                control_law=dpc,
+                                reference=None,
+                                disturbance=d_profile)
+
+            loss_map[:, j] = dpc.get_total_loss()
+        
+        print(i, "Finished")
+
     return i, loss_map
 
 

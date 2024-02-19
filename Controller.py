@@ -311,8 +311,8 @@ class DeePC(Controller):
                         "g": self.traj_constraint,
                         "p": self.opt_p}
 
-        opts = {"ipopt.tol": 1e-12,
-                "ipopt.max_iter": 200,
+        opts = {"ipopt.tol": 1e-9,
+                "ipopt.max_iter": 100,
                 "ipopt.print_level": 0,
                 "expand": True,
                 "verbose": False,
