@@ -86,14 +86,13 @@ def sim_parellel(iter_pair, *, n_steps, x, Ts, d_profile):
     i, λ_s = iter_pair[0], iter_pair[1]
     print(i, "Started")
 
-    suspension = ActiveSuspension(x0=x, Ts=Ts)
-    
     λg_range = np.linspace(0, 10, 20)
 
     loss_map = np.zeros((1, λg_range.shape[0]), dtype=np.float64)
 
     for j, λ_g in enumerate(λg_range):
-        suspension.rst(x)
+        suspension = ActiveSuspension(x0=x, Ts=Ts)
+        
         excitation = OpenLoop.rnd_input(suspension, n_steps)
         dpc = DeePC(suspension, 4, 10, excitation, λ_s=λ_s, λ_g=λ_g)
 
