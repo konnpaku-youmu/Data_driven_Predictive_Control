@@ -86,8 +86,8 @@ def main():
 
 
 if __name__ == "__main__":
-    # main()
-    map = np.load("loss_map.npy")
-    map = np.ma.array(map, mask=np.isnan(map))
-    plt.imshow(np.log10(map))
-    plt.show()
+    main()
+    # map = np.load("loss_map.npy")
+    # map = np.ma.array(map, mask=np.isnan(map))
+    # plt.imshow(np.log10(map))
+    # plt.show()
