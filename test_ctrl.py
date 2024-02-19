@@ -53,8 +53,8 @@ def main():
     #                     reference=None, disturbance=d_profile)
     # suspension.plot_trajectory(axis=ax1, states=[1])
 
-    λs_range = np.linspace(0, 1, 100)
-    λg_range = np.linspace(0, 1, 100)
+    λs_range = np.linspace(0, 10, 100)
+    λg_range = np.linspace(0, 10, 100)
 
     iter_pairs = list(zip(range(λs_range.shape[0]), λs_range))
 
@@ -85,7 +85,7 @@ def main():
 
 def sim_parellel(iter_pair, *, n_steps, x, Ts, d_profile, λg_range):
     i, λ_s = iter_pair[0], iter_pair[1]
-    print(i, λ_s)
+    print(i, "Started")
 
     suspension = ActiveSuspension(x0=x, Ts=Ts)
     
@@ -102,7 +102,7 @@ def sim_parellel(iter_pair, *, n_steps, x, Ts, d_profile, λg_range):
                             disturbance=d_profile)
 
         loss_map[0, j] = dpc.get_total_loss()
-    
+    print(i, "Finished")
     return i, loss_map
 
 
