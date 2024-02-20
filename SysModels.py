@@ -6,91 +6,47 @@ import matplotlib.pyplot as plt
 from SysBase import *
 
 
-class SimpleHarmonic(LinearSystem):
+class ActiveSuspension(LinearSystem):
     def __init__(self, x0: np.ndarray, **kwargs) -> None:
 
-        k = 0.5
-        m = 1
+        k1 = 16000
+        k2 = 160000
+        b1 = 1000
+        b2 = 0
+        m1 = 250
+        m2 = 45
+        mi = 79
 
-        A = np.array([[0., 1],
-                      [-k/m, 0]])
+        A = np.array([[0.,     1,           0,             -1],
+                      [-k1/m1, -b1/m1,      0,          b1/m1],
+                      [0,       0,          0,              1],
+                      [k1/m2, b1/m2,   -k2/m2,    -(b1+b2)/m2]])
 
         B = np.array([[0.],
-                      [1/m]])
+                      [1/m1],
+                      [0.],
+                      [-1/m2]])
 
-        C = np.array([[1., 0.]])
+        B2 = np.array([[0.  ],
+                       [0.  ],
+                       [-1. ],
+                       [b2/m2]])
 
-        D = np.array([[0.]])
-
-        super().__init__(A, B, C, D, x0, **kwargs)
-
-
-class InvertedPendulum(LinearSystem):
-    def __init__(self, **kwargs) -> None:
-        Rm = 2.6
-        Km = 0.00767
-        Kb = 0.00767
-        Kg = 3.7
-        M = 0.455
-        l = 0.305
-        m = 0.210
-        r = 0.635e-2
-        g = 9.81
-
-        A = np.array([[0, 0, 1, 0],
-                      [0, 0, 0, 1],
-                      [0, -m * g / M, -(Kg**2 * Km * Kb) / (M * Rm * r**2), 0],
-                      [0, (M + m) * g / (M * l), (Kg**2 * Km * Kb) / (M * Rm * r**2 * l), 0]])
-
-        B = np.array([[0],
-                      [0],
-                      [(Km * Kg) / (M * Rm * r)],
-                      [(-Km * Kg) / (r * Rm * M * l)]])
-
-        C = np.array([[1., 0., 0., 0.],
-                      [0., 1., 0., 0.]])
+        C = np.array([[1.,     0.,           0,             0],
+                      [-k1/m1, -b1/m1,      0,          b1/m1]])
 
         D = np.array([[0.],
-                      [0.]])
+                      [1/m1]])
 
-        super().__init__(A, B, C, D, **kwargs)
+        super().__init__(A, B, C, D, x0, B2, **kwargs)
+        
+        self.output_constraint.ub[1] = 3
+        self.output_constraint.lb[1] = -3
 
+        self.input_constraint.lb[0] = -2
+        self.input_constraint.ub[0] = 2
 
-class FlexJoint(LinearSystem):
-    def __init__(self, x0: np.ndarray, **kwargs) -> None:
-        Rm = 2.6
-        Km = 0.00767
-        Kb = 0.00767
-        Kg = 70
-        Jl = 0.0059
-        Jh = 0.0021
-        Ks = 1.60856
-
-        A = np.array([[0, 0, 1, 0],
-                      [0, 0, 0, 1],
-                      [0, Ks / Jh, -(Kg**2 * Km * Kb) / (Jh * Rm), 0],
-                      [0, -(Jl + Jh) * Ks / (Jl*Jh), (Kg**2 * Km * Kb) / (Jh * Rm), 0]])
-
-        B = np.array([[0],
-                      [0],
-                      [(Km * Kg) / (Jh * Rm)],
-                      [(-Km * Kg) / (Rm * Jh)]])
-
-        C = np.array([[1., 0., 0., 0.],
-                      [0., 1., 0., 0.]])
-
-        D = np.array([[0.],
-                      [0.]])
-
-        self.lb_output = np.array([[-np.pi],
-                                   [-np.pi]])
-        self.ub_output = np.array([[np.pi],
-                                   [np.pi]])
-        self.lb_input = np.array([[-9.0]])
-        self.ub_input = np.array([[9.0]])
-
-        super().__init__(A, B, C, D, x0, **kwargs)
-
+        self.noisy = True
 
 class IPNonlinear(NonlinearSystem):
     def __init__(self, x0, **kwargs) -> None:

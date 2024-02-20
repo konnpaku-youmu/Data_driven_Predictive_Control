@@ -1,8 +1,10 @@
 import numpy as np
 from typing import Tuple, Callable
+from dataclasses import dataclass
 from scipy import linalg
 import casadi as cs
 import matplotlib.pyplot as plt
+
 
 def forward_euler(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
     n_states = A.shape[1]
@@ -11,6 +13,7 @@ def forward_euler(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
     Bd = Ts * B
 
     return Ad, Bd
+
 
 def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
     em_upper = np.hstack((A, B))
@@ -30,25 +33,28 @@ def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
 
     return Ad, Bd
 
+
 def runge_kutta(order: int, f: cs.Function):
-    
+
     ...
+
 
 def hankelize(vec: np.ndarray, L: int) -> np.ndarray:
     T = vec.shape[0]
     n = vec.shape[1]
-    assert(T >= L)
+    assert (T >= L)
 
     H = np.zeros([L*n, T-L+1])
 
     for i in range(T-L+1):
         H[:, i] = vec[i:i+L, :, :].reshape([L*n])
-    
+
     return H
 
+
 def pagerize(vec: np.ndarray, L: int, S: int = None) -> np.ndarray:
-    N=vec.shape[0]
-    n=vec.shape[1]
+    N = vec.shape[0]
+    n = vec.shape[1]
     if S > L:
         print("Stride larger than L. Reset to L")
         S = L
@@ -58,7 +64,7 @@ def pagerize(vec: np.ndarray, L: int, S: int = None) -> np.ndarray:
     if (N-L) % S != 0:
         N = (k-1) * S + L
         vec = vec[:N]
-    
+
     P = np.zeros([L*n, k])
 
     for i in range(k):
@@ -66,8 +72,34 @@ def pagerize(vec: np.ndarray, L: int, S: int = None) -> np.ndarray:
 
     return P
 
+
+def generate_road_profile(length: int, samples: int, Ts: float, type: str = "step"):
+
+    d = np.linspace(0, length, samples+1)
+    profile = np.zeros_like(d)
+
+    if type == "step":
+        pos = int(samples / 2)
+        profile[pos:] = 0.05 # A 5cm high step
+    elif type == "bump":
+        ...
+    elif type == "wave":
+        profile = np.maximum(0.05*np.sin(0.1*np.pi*d), 0) # Rectified sine wave, height = 5cm
+    
+    # differentiate the profile
+    d_profile = np.array([(profile[i] - profile[i-1])/Ts for i in range(1, samples+1)])
+    d_profile = np.atleast_3d(d_profile.squeeze()).reshape([samples, -1, 1])
+    
+    return profile, d_profile
+
+@dataclass
+class Bound:
+    lb: np.ndarray = None
+    ub: np.ndarray = None
+
+
 class RndSetpoint:
-    def __init__(self, n_output, n_steps, trac_states: list, 
+    def __init__(self, n_output, n_steps, trac_states: list,
                  bounds: np.ndarray, **kwargs) -> None:
 
         kwargs.setdefault("switch_prob", 0.05)
@@ -93,6 +125,13 @@ class RndSetpoint:
 
     def __call__(self) -> np.ndarray:
         return self.sp
+
+
+class Plotter:
+
+    def __init__(self) -> None:
+        ...
+
 
 if __name__ == "__main__":
     v = np.linspace([1, 1], [10, 10], 50)

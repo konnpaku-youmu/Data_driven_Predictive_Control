@@ -1,7 +1,8 @@
 *.pyc
 *.asv
-.vscode/*
+*.npy
+.vscode
 examples/*
 toy_example/*
 DeePC_example/*
-__pychache__
+__pycache__
