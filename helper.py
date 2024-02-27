@@ -75,16 +75,16 @@ def pagerize(vec: np.ndarray, L: int, S: int = None) -> np.ndarray:
 
 def generate_road_profile(length: int, samples: int, Ts: float, type: str = "step"):
 
-    d = np.linspace(0, length, samples+1)
+    d = np.linspace(5, length+5, samples+1)
     profile = np.zeros_like(d)
 
     if type == "step":
-        pos = int(samples / 2)
+        pos = int(samples / 4)
         profile[pos:] = 0.05 # A 5cm high step
     elif type == "bump":
         ...
     elif type == "wave":
-        profile = np.maximum(0.05*np.sin(0.1*np.pi*d), 0) # Rectified sine wave, height = 5cm
+        profile = np.maximum(0.05*np.sin(0.05*np.pi*d), 0) # Rectified sine wave, height = 5cm
     
     # differentiate the profile
     d_profile = np.array([(profile[i] - profile[i-1])/Ts for i in range(1, samples+1)])

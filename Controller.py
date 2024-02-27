@@ -64,14 +64,14 @@ class OpenLoop(Controller):
     def __set_input_sequence(self, u: np.ndarray) -> None:
         self.u = u
 
-    def __rnd_input_seq(self, length: int, lbu: np.ndarray, ubu: np.ndarray, switch_prob: float = 0.5) -> None:
+    def __rnd_input_seq(self, length: int, lbu: np.ndarray, ubu: np.ndarray, switch_prob: float = 0.6) -> None:
         assert (lbu.shape == ubu.shape)
 
         self.u = np.ones([length, lbu.shape[0], ubu.shape[1]])
 
         for k in range(length):
             if np.random.rand() <= switch_prob:
-                self.u[k] = np.random.uniform(-1, 1, [1, 1])
+                self.u[k] = np.random.uniform(-400, 400, [1, 1])
             else:
                 self.u[k] = self.u[k-1]
 
@@ -177,11 +177,10 @@ class MPC(Controller):
         self.param_vals = opt_params(0)
         self.var_vals = opt_vars(0)
 
-        x = opt_params["x0"] - opt_params["ref"]
+        x = opt_params["x0"]
 
         for k in range(self.horizon):
 
-            x -= opt_params["ref"]
             uk = opt_vars["u", k]
 
             wk = np.zeros((self.model.m2, 1))
@@ -195,7 +194,7 @@ class MPC(Controller):
             lbx.append(lb_states)
             ubx.append(ub_states)
 
-            cost += x.T@Q@x + uk.T@R@uk
+            cost += y.T@Q@y + uk.T@R@uk
 
         self.problem = {"x": opt_vars,  # optimized variables: input u
                         "f": cost,
@@ -207,7 +206,7 @@ class MPC(Controller):
                 "ipopt.print_level": 0,
                 "expand": True,
                 "verbose": False,
-                "print_time": True}
+                "print_time": False}
 
         solver = nlpsol("solver", "ipopt", self.problem, opts)
 
@@ -243,7 +242,7 @@ class DeePC(Controller):
     controller_type = ControllerType.PREDICTIVE
 
     def __init__(self, model: System, T_ini: int, horizon: int,
-                 init_law: Controller, data_mat: SMStruct = SMStruct.HANKEL, **kwargs) -> None:
+                 init_law: Controller, init_len: int = None, data_mat: SMStruct = SMStruct.HANKEL, **kwargs) -> None:
         super().__init__(model)
 
         kwargs.setdefault("output_bound", self.model.output_constraint)
@@ -259,6 +258,7 @@ class DeePC(Controller):
         self.closed_loop = True
 
         self.T_ini = T_ini
+        self.init_len = init_len
         self.horizon = horizon
         self.init_ctrl = init_law
         self.sm_struct = data_mat
@@ -289,10 +289,11 @@ class DeePC(Controller):
         nu = self.model.m
         ny = self.model.p
 
-        if self.sm_struct == SMStruct.HANKEL:
-            self.init_len = (nu + 1) * (L + nx) - 1
-        elif self.sm_struct == SMStruct.PAGE:
-            self.init_len = 2*L*((nu+1)*(nx+1)-1)
+        if self.init_len == None:
+            if self.sm_struct == SMStruct.HANKEL:
+                self.init_len = (nu + 1) * (L + nx) - 1
+            elif self.sm_struct == SMStruct.PAGE:
+                self.init_len = 2*L*((nu+1)*(nx+1)-1)
 
         self.ref = np.zeros([self.init_len, ny, 1])
         if self.init_ctrl.closed_loop:
@@ -312,7 +313,7 @@ class DeePC(Controller):
                         "p": self.opt_p}
 
         opts = {"ipopt.tol": 1e-9,
-                "ipopt.max_iter": 100,
+                "ipopt.max_iter": 200,
                 "ipopt.print_level": 0,
                 "expand": True,
                 "verbose": False,
@@ -338,17 +339,15 @@ class DeePC(Controller):
         self.U_f = U_f
 
         self.opt_p = struct_symMX([entry('u_ini', shape=(self.model.m), repeat=self.T_ini),
-                                   entry('y_ini', shape=(
-                                       self.model.p), repeat=self.T_ini),
+                                   entry('y_ini', shape=(self.model.p), repeat=self.T_ini),
                                    entry('ref', shape=(self.model.p))])
         self.opti_vars = struct_symMX([entry("u", shape=(self.model.m), repeat=self.horizon),
-                                       entry("y", shape=(
-                                           self.model.p), repeat=self.horizon),
+                                       entry("y", shape=(self.model.p), repeat=self.horizon),
                                        entry("g", shape=[U_f.shape[1]])])
         self.opti_vars_num = self.opti_vars(0)
         self.opt_p_num = self.opt_p(0)
 
-        if self.model.noisy or type(self.model) != LinearSystem:
+        if self.model.noisy or not isinstance(self.model, LinearSystem):
             A = vertcat(U_p, Y_p, U_f)
             b = vertcat(*self.opt_p['u_ini'],
                         *self.opt_p['y_ini'],
@@ -377,13 +376,14 @@ class DeePC(Controller):
         Q, R, = self.Q, self.R
 
         for k in range(self.horizon):
-            y_k = self.opti_vars["y", k] - self.opt_p['ref']
+            y_k = self.opti_vars["y", k]
             u_k = self.opti_vars["u", k]
-            loss += (1/2) * sum1(y_k.T @ Q @ y_k) + \
-                    (1/2) * sum1(u_k.T @ R @ u_k)
 
-        if self.model.noisy or type(self.model) != LinearSystem:
+            loss += sum1(y_k.T @ Q @ y_k) + sum1(u_k.T @ R @ u_k)
+
+        if self.model.noisy or not isinstance(self.model, LinearSystem):
             # regularization terms
+            print("Add regularization")
             g = self.opti_vars["g"]
             Y_f = vertcat(self.Y_f)
             y = vertcat(*self.opti_vars['y'])
@@ -432,8 +432,9 @@ class DeePC(Controller):
             0, y.shape[0]*self.model.Ts, y.shape[0], endpoint=False)
 
         for i in range(self.model.p):
-            axis.step(plot_range[self.init_len:], self.ref[self.init_len:,
-                                                           i, :], label=r"$ref_{}$".format(i), **pltargs)
+            axis.step(plot_range[self.init_len:], 
+                      self.ref[self.init_len:, i, :], 
+                      label=r"$ref_{}$".format(i), **pltargs)
 
         axis.fill_betweenx(np.arange(-5, 5, 0.1), 0, self.init_len*self.model.Ts,
                            alpha=0.4, label="Init stage", color="#7F7F7F")
