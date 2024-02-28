@@ -242,6 +242,33 @@ class System:
         # axis.set_ylim(np.min(self.lb_output), np.max(self.ub_output))
         axis.legend()
         axis.set_xlabel(r"Time(s)")
+    
+    def plot_phasespace(self, 
+                        *,
+                        axis: plt.Axes,
+                        states: list,
+                        trim_exci: bool = False,
+                        **pltargs):
+        pltargs.setdefault('linewidth', 1.2)
+
+        if states == Any or states == None:
+            states = range(self.p)
+
+        y = self.get_y()
+        if trim_exci:
+            y = y[-self.n_steps: , :, :]
+
+        plot_range = np.linspace(
+            0, y.shape[0]*self.Ts, y.shape[0], endpoint=False)
+
+        for i in states:
+            axis.plot(plot_range, y[:, i, :],
+                      label=r"$y_{}$".format(i), **pltargs)
+
+        # axis.set_ylim(np.min(self.lb_output), np.max(self.ub_output))
+        axis.legend()
+        axis.set_xlabel(r"Time(s)")
+        ...
 
     def plot_control_input(self, 
                            *, 

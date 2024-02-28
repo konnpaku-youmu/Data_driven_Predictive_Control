@@ -87,7 +87,8 @@ class ActiveSuspension(LinearSystem):
         self.input_constraint.lb[0] = -500
         self.input_constraint.ub[0] = 500
 
-        self.noisy = True
+        self.noisy = False
+
 
 class IPNonlinear(NonlinearSystem):
     def __init__(self, x0, **kwargs) -> None:

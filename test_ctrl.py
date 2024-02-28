@@ -21,6 +21,7 @@ plt.rcParams.update({
 def init_pool():
     np.random.seed(current_process().pid)
 
+
 def main():
     dist, v, Ts = 40, 10, 0.02
     t_sim = dist / v
@@ -34,26 +35,27 @@ def main():
 
     suspension = ActiveSuspension(x0=x, Ts=Ts)
 
-    # σ_w, σ_v, σ_p = 0.025, 0.04, 0.025
-    # kalman = KF(suspension, x, σ_w=σ_w, σ_v=σ_v, σ_p=σ_p)
+    σ_w, σ_v, σ_p = 0.025, 0.04, 0.025
+    kalman = KF(suspension, x, σ_w=σ_w, σ_v=σ_v, σ_p=σ_p)
 
-    # Q = np.array([[3e4,   0, 0, 0],
-    #               [0,   3e4, 0, 0],
-    #               [0,   0, 5e3, 0],
-    #               [0,   0, 0, 5e3]])
-    Q = np.array([[1e3,     0],
-                  [0,     1.7e3]])
+    Q_lqr = np.array([[2e3,   0, 0, 0],
+                      [0,   3e4, 0, 0],
+                      [0,   0, 5e2, 0],
+                      [0,   0, 0, 5e2]])
 
-    R = np.array([[0.02]])
+    Q = np.array([[2e2,       0],
+                  [0,     1.5e3]])
+
+    R = np.array([[0.01]])
 
     T_ini = 4
-    λ_s, λ_g = 5e2, 6.5e2
-    horizon = 10
+    λ_s, λ_g = 6e2, 8.2e2
+    horizon = 5
 
     profile, d_profile = generate_road_profile(dist, n_steps, Ts)
     # d_profile = None
 
-    # lqr = LQRController(suspension, Q=Q, R=R)
+    lqr = LQRController(suspension, Q=Q_lqr, R=R)
     mpc = MPC(suspension, horizon=horizon, Q=Q, R=R)
 
     suspension.simulate(n_steps,
@@ -67,7 +69,7 @@ def main():
     # suspension.rst(x)
     # suspension.simulate(n_steps,
     #                     control_law=lqr,
-    #                     observer=None,
+    #                     observer=kalman,
     #                     reference=None,
     #                     disturbance=d_profile)
     # suspension.plot_trajectory(axis=ax1, states=[1])
@@ -84,8 +86,9 @@ def main():
 
     suspension.rst(x)
     excitation = OpenLoop.rnd_input(suspension, n_steps)
-    dpc = DeePC(suspension, T_ini=T_ini, horizon=horizon,           
+    dpc = DeePC(suspension, T_ini=T_ini, horizon=horizon,
                 init_law=excitation, λ_s=λ_s, λ_g=λ_g, Q=Q, R=R)
+    suspension.rst(x)
 
     suspension.simulate(n_steps,
                         control_law=dpc,
@@ -99,15 +102,13 @@ def main():
 
 def sim_parellel(n_steps, x, Ts, d_profile, λ_s, λ_g, params):
 
-    print(params)
-
     T_ini, init_l = params[0], params[1]
 
     suspension = ActiveSuspension(x0=x, Ts=Ts)
 
     excitation = OpenLoop.rnd_input(suspension, n_steps)
-    dpc = DeePC(suspension, T_ini=T_ini, horizon=5, 
-                init_law=excitation, init_len=init_l, 
+    dpc = DeePC(suspension, T_ini=T_ini, horizon=5,
+                init_law=excitation, init_len=init_l,
                 λ_s=λ_s, λ_g=λ_g)
 
     suspension.simulate(n_steps,

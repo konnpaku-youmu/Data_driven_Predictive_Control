@@ -97,7 +97,6 @@ class Bound:
     lb: np.ndarray = None
     ub: np.ndarray = None
 
-
 class RndSetpoint:
     def __init__(self, n_output, n_steps, trac_states: list,
                  bounds: np.ndarray, **kwargs) -> None:
@@ -134,9 +133,5 @@ class Plotter:
 
 
 if __name__ == "__main__":
-    v = np.linspace([1, 1], [10, 10], 50)
-    H = hankelize(np.atleast_3d(v), 5)
-    P = pagerize(np.atleast_3d(v), 5, 2)
-    print(P.shape, H.shape)
-    plt.matshow(P)
-    plt.show()
+    x = np.array([[0], [0], [0], [0]])
+

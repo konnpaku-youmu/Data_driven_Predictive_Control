@@ -2,12 +2,15 @@ import numpy as np
 from enum import Enum
 from scipy import linalg
 import matplotlib.pyplot as plt
+from typing import Callable, List
+from dataclasses import dataclass, field
 
 import casadi as cs
 from casadi.tools import *
 
 from SysModels import System, LinearSystem
 from helper import hankelize, pagerize, RndSetpoint, Bound
+from rcracers.utils.geometry import Polyhedron, Ellipsoid
 
 
 class ControllerType(Enum):
@@ -24,6 +27,20 @@ class SMStruct(Enum):
 class OCPType(Enum):
     CANONICAL = 0
     REGULARIZED = 1
+
+
+@dataclass
+class InvSetResults:
+    n_iter: int = 0
+    iterations: List[Polyhedron] = field(default_factory=list)
+    success: bool = False
+
+    def increment(self):
+        self.n_iter += 1
+
+    @property
+    def solution(self) -> Polyhedron:
+        return self.iterations[-1]
 
 
 class Controller:
@@ -137,6 +154,8 @@ class MPC(Controller):
         self.R = kwargs["R"]
         self.Pf = kwargs["Pf"]
 
+        self.Xf = None
+
         self.problem = None
         self.solver = None
 
@@ -216,6 +235,64 @@ class MPC(Controller):
         )
 
         return solver, bounds
+
+    def __build_feasible_state_set(self) -> Polyhedron:
+        H = np.vstack([np.eye(self.model.n),
+                       -np.eye(self.model.n)])
+
+        h = np.vstack([self.model.output_constraint.ub,
+                       -self.model.output_constraint.lb])
+
+        return Polyhedron.from_inequalities(H, h)
+
+    def __build_feasible_input_set(self) -> Polyhedron:
+        H = np.vstack([np.eye(self.model.m),
+                       -np.eye(self.model.m)])
+
+        h = np.vstack([self.model.input_constraint.ub,
+                       -self.model.input_constraint.lb])
+
+        return Polyhedron.from_inequalities(H, h)
+
+    def compute_pre(self, set: Polyhedron, Acl: np.ndarray):
+        return set.from_inequalities(set.H@Acl, set.h)
+
+    def __invariant_iter(self, Ω_0: Polyhedron, pre: Callable, max_iter: int):
+        result = InvSetResults()
+        result.iterations.append(Ω_0)
+
+        Ω = Ω_0
+        while result.n_iter <= max_iter:
+            Ω_next = pre(Ω).intersect(Ω).canonicalize()
+            result.iterations.append(Ω_next)
+            if Ω_next == Ω:
+                result.success = True
+                break
+            Ω = Ω_next
+            result.increment()
+
+        return result
+
+    def compute_invariant_set(self, max_iter: int = 200):
+        Xx = self.__build_feasible_state_set()
+        Xu = self.__build_feasible_input_set()
+        X_init = Xx.intersect(Xu)
+        Ω_0 = X_init
+
+        A, B = self.model.B, self.model.A
+        Q = np.eye(self.model.n)
+
+        # find the LQR solution of the problem
+        P = linalg.solve_discrete_are(A, B, Q, self.R)
+        K = -np.linalg.inv(self.R + B.T@P@B)@B.T@P@A
+        Acl = A + B@K
+
+        def pre(Ω):
+            return self.compute_pre(Ω, Acl)
+
+        result = self.__invariant_iter(Ω_0, pre, max_iter)
+
+        return result
 
     def __update_ref(self, r: np.ndarray) -> None:
         self.ref = np.concatenate(
@@ -399,8 +476,8 @@ class DeePC(Controller):
             [self.ref, np.atleast_3d(r.squeeze())], axis=0)
 
     def __call__(self, x: np.ndarray, r: np.ndarray) -> np.ndarray:
-        y_ini = self.model.get_y()[-self.T_ini:].squeeze()
-        u_ini = self.model.get_u()[-self.T_ini:].squeeze()
+
+        y_ini, u_ini = self.__build_ini_traj()
 
         self.opt_p_num['u_ini'] = vertsplit(u_ini)
         self.opt_p_num['y_ini'] = vertsplit(y_ini)
@@ -421,6 +498,26 @@ class DeePC(Controller):
 
         return u[:self.model.m], u[self.model.m:]
 
+    def __build_ini_traj(self):
+        y_ini = self.model.get_y()[-self.T_ini:]
+        u_ini = self.model.get_u()[-self.T_ini:]
+
+        assert y_ini.shape[0] == u_ini.shape[0], "Input/Output length mismatch"
+
+        if y_ini.shape[0] != self.T_ini:
+            p_len = self.T_ini - y_ini.shape[0]
+            padding_y = np.zeros([p_len, self.model.p, 1])
+            padding_u = np.zeros([p_len, self.model.m, 1])
+            y_ini = np.vstack([padding_y, 
+                               y_ini])
+            u_ini = np.vstack([padding_u, 
+                               u_ini])
+
+        y_ini = y_ini.squeeze()
+        u_ini = u_ini.squeeze()
+        
+        return y_ini,u_ini
+
     def get_total_loss(self):
         return np.sum(np.array(self.objective))
 
@@ -432,8 +529,8 @@ class DeePC(Controller):
             0, y.shape[0]*self.model.Ts, y.shape[0], endpoint=False)
 
         for i in range(self.model.p):
-            axis.step(plot_range[self.init_len:], 
-                      self.ref[self.init_len:, i, :], 
+            axis.step(plot_range[self.init_len:],
+                      self.ref[self.init_len:, i, :],
                       label=r"$ref_{}$".format(i), **pltargs)
 
         axis.fill_betweenx(np.arange(-5, 5, 0.1), 0, self.init_len*self.model.Ts,
