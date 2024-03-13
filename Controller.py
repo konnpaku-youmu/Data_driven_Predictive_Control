@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 import casadi as cs
 from casadi.tools import *
 
-from SysModels import System, LinearSystem
+from SysModels import System, LinearSystem, NonlinearSystem
 from helper import hankelize, pagerize, RndSetpoint, Bound
 from rcracers.utils.geometry import Polyhedron, Ellipsoid
 
@@ -122,6 +122,10 @@ class LQRController(Controller):
 
         self.compute_K()
 
+    def set_weights(self, Q: np.ndarray, R: np.ndarray) -> None:
+        self.Q, self.R = Q, R
+        self.compute_K()
+
     def compute_K(self) -> None:
         A = self.model.A
         B = self.model.B
@@ -130,13 +134,24 @@ class LQRController(Controller):
         self.K = -np.linalg.inv(self.R + B.T@P@B)@B.T@P@A
 
     def __call__(self, x: np.ndarray, r: int) -> np.ndarray:
-        return self.K@(x - r), None
+        u = self.K@(x - r)
+
+        if u >= self.model.input_constraint.ub:
+            u = self.model.input_constraint.ub
+        elif u <= self.model.input_constraint.lb:
+            u = self.model.input_constraint.lb
+
+        return u, None
 
 
 class MPC(Controller):
     controller_type = ControllerType.PREDICTIVE
 
-    def __init__(self, model: System, horizon: int, **kwargs) -> None:
+    def __init__(self, model: System,
+                 horizon: int,
+                 *,
+                 enforce_term: bool = False,
+                 **kwargs) -> None:
 
         super().__init__(model)
 
@@ -154,7 +169,8 @@ class MPC(Controller):
         self.R = kwargs["R"]
         self.Pf = kwargs["Pf"]
 
-        self.Xf = None
+        self.enforce_term = enforce_term
+        self.Yf = self.__compute_invariant_set()
 
         self.problem = None
         self.solver = None
@@ -215,6 +231,13 @@ class MPC(Controller):
 
             cost += y.T@Q@y + uk.T@R@uk
 
+        if self.enforce_term and isinstance(self.Yf, Polyhedron):
+            state_constraints.append(self.Yf.H @ x - self.Yf.h)
+            lbx.append(-np.ones_like(self.Yf.h) * np.infty)
+            ubx.append(np.zeros_like(self.Yf.h))
+        elif self.enforce_term and isinstance(self.Yf, Ellipsoid):
+            ...
+
         self.problem = {"x": opt_vars,  # optimized variables: input u
                         "f": cost,
                         "g": cs.vertcat(*state_constraints),
@@ -236,25 +259,28 @@ class MPC(Controller):
 
         return solver, bounds
 
-    def __build_feasible_state_set(self) -> Polyhedron:
-        H = np.vstack([np.eye(self.model.n),
-                       -np.eye(self.model.n)])
+    def __build_feasible_output_set(self, K) -> Polyhedron:
+
+        C, D = self.model.C, self.model.D
+
+        H = np.vstack([np.eye(self.model.p),
+                       -np.eye(self.model.p)]) @ (C + D@K)
 
         h = np.vstack([self.model.output_constraint.ub,
                        -self.model.output_constraint.lb])
 
         return Polyhedron.from_inequalities(H, h)
 
-    def __build_feasible_input_set(self) -> Polyhedron:
+    def __build_feasible_input_set(self, K: np.ndarray) -> Polyhedron:
         H = np.vstack([np.eye(self.model.m),
-                       -np.eye(self.model.m)])
+                       -np.eye(self.model.m)]) @ K
 
         h = np.vstack([self.model.input_constraint.ub,
                        -self.model.input_constraint.lb])
 
         return Polyhedron.from_inequalities(H, h)
 
-    def compute_pre(self, set: Polyhedron, Acl: np.ndarray):
+    def __compute_pre(self, set: Polyhedron, Acl: np.ndarray):
         return set.from_inequalities(set.H@Acl, set.h)
 
     def __invariant_iter(self, Ω_0: Polyhedron, pre: Callable, max_iter: int):
@@ -273,26 +299,33 @@ class MPC(Controller):
 
         return result
 
-    def compute_invariant_set(self, max_iter: int = 200):
-        Xx = self.__build_feasible_state_set()
-        Xu = self.__build_feasible_input_set()
-        X_init = Xx.intersect(Xu)
-        Ω_0 = X_init
+    def __compute_invariant_set(self, max_iter: int = 200):
 
-        A, B = self.model.B, self.model.A
-        Q = np.eye(self.model.n)
+        if isinstance(self.model, LinearSystem):
+            A, B = self.model.A, self.model.B
+        elif isinstance(self.model, NonlinearSystem):
+            ...
+
+        Q = np.eye(self.model.n) * 3e2
 
         # find the LQR solution of the problem
         P = linalg.solve_discrete_are(A, B, Q, self.R)
         K = -np.linalg.inv(self.R + B.T@P@B)@B.T@P@A
+
+        Xu = self.__build_feasible_input_set(K)
+        Xy = self.__build_feasible_output_set(K)
+
+        X_init = Xy.intersect(Xu)
+        Ω_0 = X_init
+
         Acl = A + B@K
 
         def pre(Ω):
-            return self.compute_pre(Ω, Acl)
+            return self.__compute_pre(Ω, Acl)
 
         result = self.__invariant_iter(Ω_0, pre, max_iter)
 
-        return result
+        return result.solution
 
     def __update_ref(self, r: np.ndarray) -> None:
         self.ref = np.concatenate(
@@ -424,17 +457,17 @@ class DeePC(Controller):
         self.opti_vars_num = self.opti_vars(0)
         self.opt_p_num = self.opt_p(0)
 
-        if self.model.noisy or not isinstance(self.model, LinearSystem):
-            A = vertcat(U_p, Y_p, U_f)
-            b = vertcat(*self.opt_p['u_ini'],
-                        *self.opt_p['y_ini'],
-                        *self.opti_vars['u'])
-        else:
+        if isinstance(self.model, LinearSystem) and not self.model.noisy:
             A = vertcat(U_p, Y_p, U_f, Y_f)
             b = vertcat(*self.opt_p['u_ini'],
                         *self.opt_p['y_ini'],
                         *self.opti_vars['u'],
                         *self.opti_vars['y'])
+        else:
+            A = vertcat(U_p, Y_p, U_f)
+            b = vertcat(*self.opt_p['u_ini'],
+                        *self.opt_p['y_ini'],
+                        *self.opti_vars['u'])
 
         g = self.opti_vars['g']
         self.traj_constraint = A@g - b
@@ -508,15 +541,15 @@ class DeePC(Controller):
             p_len = self.T_ini - y_ini.shape[0]
             padding_y = np.zeros([p_len, self.model.p, 1])
             padding_u = np.zeros([p_len, self.model.m, 1])
-            y_ini = np.vstack([padding_y, 
+            y_ini = np.vstack([padding_y,
                                y_ini])
-            u_ini = np.vstack([padding_u, 
+            u_ini = np.vstack([padding_u,
                                u_ini])
 
         y_ini = y_ini.squeeze()
         u_ini = u_ini.squeeze()
-        
-        return y_ini,u_ini
+
+        return y_ini, u_ini
 
     def get_total_loss(self):
         return np.sum(np.array(self.objective))

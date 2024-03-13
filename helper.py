@@ -23,6 +23,8 @@ def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
                           np.zeros((B.shape[1], B.shape[1]))))
 
     em = np.vstack((em_upper, em_lower))
+
+    
     ms = linalg.expm(Ts * em)
 
     # Dispose of the lower rows
@@ -80,7 +82,7 @@ def generate_road_profile(length: int, samples: int, Ts: float, type: str = "ste
 
     if type == "step":
         pos = int(samples / 4)
-        profile[pos:] = 0.05 # A 5cm high step
+        profile[pos:] = 0.1 # A 5cm high step
     elif type == "bump":
         ...
     elif type == "wave":

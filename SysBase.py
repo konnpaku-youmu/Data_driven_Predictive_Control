@@ -35,6 +35,7 @@ class System:
         self.v: float = None  # measurement noise
 
         # constraints
+        self.state_constraint: Bound = Bound()
         self.output_constraint: Bound = Bound()
         self.input_constraint: Bound = Bound()
 
@@ -46,6 +47,8 @@ class System:
         raise NotImplementedError()
     
     def _init_constraints(self):
+        self.state_constraint.ub = np.ones((self.n, 1)) * np.infty
+        self.state_constraint.lb = -np.ones((self.n, 1)) * np.infty
         self.output_constraint.ub = np.ones((self.p, 1)) * np.infty
         self.output_constraint.lb = -np.ones((self.p, 1)) * np.infty
         self.input_constraint.ub = np.ones((self.m, 1)) * np.infty
@@ -222,8 +225,9 @@ class System:
                         axis: plt.Axes,
                         states: list,
                         trim_exci: bool = False,
+                        label_prefix = "",
                         **pltargs):
-        pltargs.setdefault('linewidth', 1.2)
+        pltargs.setdefault('linewidth', 1.5)
 
         if states == Any or states == None:
             states = range(self.p)
@@ -236,12 +240,16 @@ class System:
             0, y.shape[0]*self.Ts, y.shape[0], endpoint=False)
 
         for i in states:
-            axis.plot(plot_range, y[:, i, :],
-                      label=r"$y_{}$".format(i), **pltargs)
+            if self.output_names is not None:
+                lbl = self.output_names[i] + ": " + label_prefix
+            else:
+                lbl = r"$y_{}$".format(i) + label_prefix
 
-        # axis.set_ylim(np.min(self.lb_output), np.max(self.ub_output))
-        axis.legend()
-        axis.set_xlabel(r"Time(s)")
+            axis.plot(plot_range, y[:, i, :],
+                      label=lbl, **pltargs)
+
+        axis.legend(loc="upper right")
+        axis.set_xlabel(r"{Time(s)}")
     
     def plot_phasespace(self, 
                         *,
@@ -251,24 +259,17 @@ class System:
                         **pltargs):
         pltargs.setdefault('linewidth', 1.2)
 
-        if states == Any or states == None:
-            states = range(self.p)
-
         y = self.get_y()
         if trim_exci:
             y = y[-self.n_steps: , :, :]
 
-        plot_range = np.linspace(
-            0, y.shape[0]*self.Ts, y.shape[0], endpoint=False)
+        if states == Any or states == None:
+            # plot the first two states by default
+            states = [0, 1]
 
-        for i in states:
-            axis.plot(plot_range, y[:, i, :],
-                      label=r"$y_{}$".format(i), **pltargs)
+        axis.plot(y[:, states[0], :], y[:, states[1], :], marker = "x", **pltargs)
 
-        # axis.set_ylim(np.min(self.lb_output), np.max(self.ub_output))
         axis.legend()
-        axis.set_xlabel(r"Time(s)")
-        ...
 
     def plot_control_input(self, 
                            *, 
@@ -384,6 +385,15 @@ class LinearSystem(System):
 
         return y
     
+    def ctrl(self):
+        C = self.B
+
+        for ord in range(1, self.n):
+            C_block = np.linalg.matrix_power(self.A, ord) @ self.B
+            C = np.concatenate([C, C_block], axis=1)
+        
+        return C
+
     def obsv(self):
         O = self.C
 
@@ -393,3 +403,13 @@ class LinearSystem(System):
         
         return O
 
+    def lag(self):
+        O = self.C
+
+        for ord in range(1, self.n):
+            O_block = self.C @ np.linalg.matrix_power(self.A, ord)
+            O = np.concatenate([O, O_block], axis=0)
+            if np.linalg.matrix_rank(O) == self.n:
+                break
+        
+        return ord

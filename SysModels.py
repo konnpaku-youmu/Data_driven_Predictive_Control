@@ -6,53 +6,15 @@ import matplotlib.pyplot as plt
 from SysBase import *
 
 
-class InvertedPendulum(LinearSystem):
-    def __init__(self, x0: np.ndarray, **kwargs) -> None:
-        Rm = 2.6
-        Km = 0.00767
-        Kb = 0.00767
-        Kg = 3.7
-        M = 0.455
-        l = 0.305
-        m = 0.210
-        r = 0.635e-2
-        g = 9.81
-
-        A = np.array([[0, 0, 1, 0],
-                      [0, 0, 0, 1],
-                      [0, -m * g / M, -(Kg**2 * Km * Kb) / (M * Rm * r**2), 0],
-                      [0, (M + m) * g / (M * l), (Kg**2 * Km * Kb) / (M * Rm * r**2 * l), 0]])
-
-        B = np.array([[0],
-                      [0],
-                      [(Km * Kg) / (M * Rm * r)],
-                      [(-Km * Kg) / (r * Rm * M * l)]])
-        
-        B2 = np.zeros_like(B)
-
-        # C = np.array([[1., 0., 0., 0.],
-        #               [0., 1., 0., 0.]])
-
-        # D = np.array([[0.],
-        #               [0.]])
-        
-        C = np.eye(4)
-
-        D = np.zeros((4, 1))
-
-        super().__init__(A, B, C, D, x0, B2, **kwargs)
-
-
 class ActiveSuspension(LinearSystem):
     def __init__(self, x0: np.ndarray, **kwargs) -> None:
 
-        k1 = 16000
-        k2 = 160000
+        k1 = 35000
+        k2 = 190000
         b1 = 1000
-        b2 = 0
-        m1 = 250
-        m2 = 45
-        mi = 79
+        b2 = 2
+        m1 = 375
+        m2 = 59
 
         A = np.array([[0.,     1,           0,             -1],
                       [-k1/m1, -b1/m1,      0,          b1/m1],
@@ -75,19 +37,24 @@ class ActiveSuspension(LinearSystem):
         D = np.array([[0.],
                       [1/m1]])
 
-        # C = np.eye(4)
-
-        # D = np.zeros((4, 1))
-
         super().__init__(A, B, C, D, x0, B2, **kwargs)
         
-        self.output_constraint.ub[1] = 5
+        self.output_constraint.lb[0] = -0.127
+        self.output_constraint.ub[0] = 0.127
         self.output_constraint.lb[1] = -5
+        self.output_constraint.ub[1] = 5
 
         self.input_constraint.lb[0] = -500
         self.input_constraint.ub[0] = 500
 
-        self.noisy = False
+        self.output_names = [r"$\Delta x_{s}$", r"$\ddot{x}_1$"]
+
+
+class BicycleModel(NonlinearSystem):
+    def __init__(self, x0: np.ndarray, **kwargs) -> None:
+        # super().__init__(states, inputs, outputs, x0, C, **kwargs)
+        ...
+    
 
 
 class IPNonlinear(NonlinearSystem):
