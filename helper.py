@@ -86,7 +86,7 @@ def generate_road_profile(length: int, samples: int, Ts: float, type: str = "ste
     elif type == "bump":
         ...
     elif type == "wave":
-        profile = np.maximum(0.05*np.sin(0.05*np.pi*d), 0) # Rectified sine wave, height = 5cm
+        profile = np.maximum(0.1*np.sin(0.05*np.pi*d), 0) # Rectified sine wave, height = 10cm
     
     # differentiate the profile
     d_profile = np.array([(profile[i] - profile[i-1])/Ts for i in range(1, samples+1)])

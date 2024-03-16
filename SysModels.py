@@ -41,13 +41,15 @@ class ActiveSuspension(LinearSystem):
         
         self.output_constraint.lb[0] = -0.127
         self.output_constraint.ub[0] = 0.127
-        self.output_constraint.lb[1] = -5
-        self.output_constraint.ub[1] = 5
+        self.output_constraint.lb[1] = -8
+        self.output_constraint.ub[1] = 8
 
-        self.input_constraint.lb[0] = -500
-        self.input_constraint.ub[0] = 500
+        self.input_constraint.lb[0] = -1000
+        self.input_constraint.ub[0] = 1000
 
         self.output_names = [r"$\Delta x_{s}$", r"$\ddot{x}_1$"]
+
+        self.noisy = False
 
 
 class BicycleModel(NonlinearSystem):

@@ -215,21 +215,23 @@ class MPC(Controller):
         x = opt_params["x0"]
 
         for k in range(self.horizon):
-
             uk = opt_vars["u", k]
-
             wk = np.zeros((self.model.m2, 1))
-
-            x = self.model._f(x, uk, wk)
+            
             y = self.model._output(x, uk)
 
+            cost += y.T@Q@y + uk.T@R@uk
+
+            x = self.model._f(x, uk, wk)
+        
             state_constraints.append(y)
             lbu.append(lb_inputs)
             ubu.append(ub_inputs)
             lbx.append(lb_states)
             ubx.append(ub_states)
 
-            cost += y.T@Q@y + uk.T@R@uk
+        y = self.model._output(x, np.zeros((self.model.m, 1)))
+        cost += y.T@(10*Q)@y
 
         if self.enforce_term and isinstance(self.Yf, Polyhedron):
             state_constraints.append(self.Yf.H @ x - self.Yf.h)
@@ -422,7 +424,7 @@ class DeePC(Controller):
                         "g": self.traj_constraint,
                         "p": self.opt_p}
 
-        opts = {"ipopt.tol": 1e-9,
+        opts = {"ipopt.tol": 1e-12,
                 "ipopt.max_iter": 200,
                 "ipopt.print_level": 0,
                 "expand": True,
@@ -459,18 +461,38 @@ class DeePC(Controller):
 
         if isinstance(self.model, LinearSystem) and not self.model.noisy:
             A = vertcat(U_p, Y_p, U_f, Y_f)
+
+            # U, s, V = np.linalg.svd(A)
+
+            # U[:, 10:] = 0
+            # s[10:] = 0
+            # V[10:, :] = 0
+
+            # import scipy.linalg
+
+            # A = U@scipy.linalg.diagsvd(s, *A.shape)@V
+
             b = vertcat(*self.opt_p['u_ini'],
                         *self.opt_p['y_ini'],
                         *self.opti_vars['u'],
                         *self.opti_vars['y'])
         else:
             A = vertcat(U_p, Y_p, U_f)
+
+            U, S, V = np.linalg.svd(A)
+            U = U[:, :9] 
+            V = V[:9, :] 
+            S = np.diag(S[:9])
+            A = U@S@V
+
             b = vertcat(*self.opt_p['u_ini'],
                         *self.opt_p['y_ini'],
                         *self.opti_vars['u'])
 
         g = self.opti_vars['g']
         self.traj_constraint = A@g - b
+
+        self.A = A
 
         # input constraints and output constraints
         optim_var = self.opti_vars
@@ -485,11 +507,15 @@ class DeePC(Controller):
         loss = 0
         Q, R, = self.Q, self.R
 
-        for k in range(self.horizon):
+        for k in range(self.horizon - 1):
             y_k = self.opti_vars["y", k]
             u_k = self.opti_vars["u", k]
 
             loss += sum1(y_k.T @ Q @ y_k) + sum1(u_k.T @ R @ u_k)
+        
+        y_N = self.opti_vars["y", self.horizon-1]
+        u_N = self.opti_vars["u", self.horizon-1]
+        loss += sum1(y_N.T @ (10*Q) @ y_N) + sum1(u_N.T @ (10*R) @ u_N)
 
         if self.model.noisy or not isinstance(self.model, LinearSystem):
             # regularization terms
