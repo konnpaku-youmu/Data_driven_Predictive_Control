@@ -1,9 +1,10 @@
 from typing import Callable, Any
 from dataclasses import dataclass
+from rich.progress import track
 import numpy as np
 import casadi as cs
 import matplotlib.pyplot as plt
-from helper import forward_euler, zoh, runge_kutta, Bound
+from helper import forward_euler, zoh, rk4, Bound
 
 
 class System:
@@ -26,17 +27,34 @@ class System:
         self.m2: int = None  # inputs: disturbance
         self.p: int = None  # outputs
 
+        # Simulation
+        self.n_steps: int = 0
+
         # noise
         self.noisy: bool = None
         self.w: float = None  # process noise
         self.v: float = None  # measurement noise
 
         # constraints
+        self.state_constraint: Bound = Bound()
         self.output_constraint: Bound = Bound()
         self.input_constraint: Bound = Bound()
 
+        # Naming
+        self.input_names: list = None
+        self.state_names: list = None
+        self.output_names: list = None
+
     def __repr__(self) -> str:
         raise NotImplementedError()
+
+    def _init_constraints(self):
+        self.state_constraint.ub = np.ones((self.n, 1)) * np.infty
+        self.state_constraint.lb = -np.ones((self.n, 1)) * np.infty
+        self.output_constraint.ub = np.ones((self.p, 1)) * np.infty
+        self.output_constraint.lb = -np.ones((self.p, 1)) * np.infty
+        self.input_constraint.ub = np.ones((self.m, 1)) * np.infty
+        self.input_constraint.lb = -np.ones((self.m, 1)) * np.infty
 
     def _set_initial_states(self, x0: np.ndarray) -> None:
         assert x0.shape[0] == self.n
@@ -44,11 +62,6 @@ class System:
         self.__x = np.ndarray([1, self.n, 1])
         self.__y = np.ndarray([1, self.p, 1])
         self.__u = np.ndarray([1, self.m, 1])
-
-        self.output_constraint.ub = np.ones((self.p, 1)) * np.infty
-        self.output_constraint.lb = -np.ones((self.p, 1)) * np.infty
-        self.input_constraint.ub = np.ones((self.m, 1)) * np.infty
-        self.input_constraint.lb = -np.ones((self.m, 1)) * np.infty
 
         self.__u[0] = np.zeros([self.m, 1])
         self.__x[0] = x0
@@ -135,31 +148,31 @@ class System:
                  n_steps: int,
                  *,
                  control_law: Callable = None,
-                 measurement: Callable = None,
+                 observer: Callable = None,
                  reference: np.ndarray = None,
                  disturbance: np.ndarray = None) -> None:
+
+        self.n_steps = n_steps
 
         if control_law is None:
             def zero_input(x, u):
                 return np.zeros((self.m, 1)), None
             control_law = zero_input
 
-        if measurement is None:
-            def full_state_sensor(xk, uk):
-                return xk
-            output = full_state_sensor
-        else:
-            output = self._output
+        if observer is None:
+            def full_state_sensor(xk):
+                return self.__x[-1]
+            observer = full_state_sensor
 
         if reference is None:
-            reference = np.zeros([n_steps, self.p, 1])
+            reference = np.zeros([n_steps, self.n, 1])
 
         if disturbance is None:
             disturbance = np.zeros([n_steps, self.m2, 1])
 
-        for k in range(n_steps):
-            # TODO: Measurement
-            uk, u_pred = control_law(self.__x[-1], reference[k])
+        for k in track(range(n_steps), description="Simulation ...", total=n_steps):
+            x_hat = observer(self.__y[-1])
+            uk, u_pred = control_law(x_hat, reference[k])
             x_next = self._f(x0=self.__x[-1], p=uk, w=disturbance[k])
             yk = self._output(x_next, uk)
 
@@ -191,6 +204,8 @@ class System:
         self.__y = None
         self.__u = None
 
+        self.n_steps: int = 0
+
         self._set_initial_states(x0)
 
     def __plot_prediction(self, k: int, **pltargs):
@@ -211,37 +226,72 @@ class System:
                         *,
                         axis: plt.Axes,
                         states: list,
+                        trim_exci: bool = False,
+                        label_prefix="",
                         **pltargs):
-        pltargs.setdefault('linewidth', 1.2)
+        pltargs.setdefault('linewidth', 1.5)
 
         if states == Any or states == None:
             states = range(self.p)
 
         y = self.get_y()
+        if trim_exci:
+            y = y[-self.n_steps:, :, :]
 
         plot_range = np.linspace(
             0, y.shape[0]*self.Ts, y.shape[0], endpoint=False)
 
         for i in states:
-            axis.plot(plot_range, y[:, i, :],
-                      label=r"$y_{}$".format(i), **pltargs)
+            if self.output_names is not None:
+                lbl = self.output_names[i] + ": " + label_prefix
+            else:
+                lbl = r"$y_{}$".format(i) + label_prefix
 
-        # axis.set_ylim(np.min(self.lb_output), np.max(self.ub_output))
+            axis.step(plot_range, y[:, i, :],
+                      label=lbl, **pltargs)
+
+        # axis.legend(loc="upper right")
+        axis.set_xlabel(r"{Time(s)}")
+
+    def plot_phasespace(self,
+                        *,
+                        axis: plt.Axes,
+                        states: list,
+                        trim_exci: bool = False,
+                        **pltargs):
+        pltargs.setdefault('linewidth', 1.2)
+        axis.set_aspect("equal", adjustable="box")
+
+        y = self.get_y()
+        if trim_exci:
+            y = y[-self.n_steps:, :, :]
+
+        if states == Any or states == None:
+            # plot the first two states by default
+            states = [0, 1]
+
+        axis.plot(y[:, states[0], :], y[:, states[1], :], **pltargs)
+
         axis.legend()
-        axis.set_xlabel(r"Time(s)")
 
-    def plot_control_input(self, *, axis: plt.Axes, **pltargs):
+    def plot_control_input(self,
+                           *,
+                           axis: plt.Axes,
+                           trim_exci: bool = False,
+                           **pltargs):
         pltargs.setdefault("linewidth", 0.7)
         pltargs.setdefault("linestyle", '--')
-        pltargs.setdefault("color", 'g')
+        # pltargs.setdefault("color", 'g')
 
         u = self.get_u()
+        if trim_exci:
+            u = u[-self.n_steps:, :, :]
 
         plot_range = np.linspace(
             0, u.shape[0]*self.Ts, u.shape[0], endpoint=False)
 
         for i in range(self.m):
-            axis.plot(plot_range, u[:, i, :],
+            axis.step(plot_range, u[:, i, :],
                       label=r"$u_{}$".format(i), **pltargs)
 
         axis.legend()
@@ -250,11 +300,12 @@ class System:
 
 class NonlinearSystem(System):
     def __init__(self, states: cs.MX, inputs: cs.MX, outputs: cs.MX,
-                 x0: np.ndarray, C: np.ndarray = None, **kwargs) -> None:
+                 x0: np.ndarray, C: np.ndarray = None, *, w: cs.MX = None, **kwargs) -> None:
         super().__init__(**kwargs)
 
         self.n = states.shape[0]
         self.m = inputs.shape[0]
+        self.m2 = w.shape[0]
         self.p = outputs.shape[0]
         self.C = C if C is not None else np.eye(self.n)  # output matrix
 
@@ -262,17 +313,23 @@ class NonlinearSystem(System):
         self._sym_u = inputs
         self._sym_y = outputs
 
-        self.__dynamics = self._define_dynamics()
-        self.__F = self.__discrete_dynamics()
+        self.__dynamics = self._dynamics_sym()
+        # self.__F = self.__discrete_dynamics()
+        self.__F = rk4(self._dynamics_num, self.Ts)
 
         self._set_noise(**kwargs)
         self._set_initial_states(x0=x0)
+        self._init_constraints()
 
     def __repr__(self) -> str:
         info = "Nonlinear system"
         return info
 
-    def _define_dynamics(self) -> cs.MX:
+    def _dynamics_sym(self) -> cs.MX:
+        # Abstract method to be overrided
+        raise NotImplementedError()
+
+    def _dynamics_num(self) -> np.ndarray:
         # Abstract method to be overrided
         raise NotImplementedError()
 
@@ -283,13 +340,14 @@ class NonlinearSystem(System):
         opts = {"tf": self.Ts}
         return cs.integrator('F', 'cvodes', DAE, opts)
 
-    def _f(self, x0, p) -> np.ndarray:
+    def _f(self, x0, p, w) -> np.ndarray:
         x_next = self.__F(x0=x0, p=p)
-        x_next = x_next["xf"]
-        return x_next.full()
+        # x_next = x_next["xf"]
+        # return x_next.full()
+        return x_next
 
     def _output(self, x, u) -> np.ndarray:
-        return self.C @ x + self._measurement_noise()
+        return self.C @ x
 
 
 class LinearSystem(System):
@@ -300,7 +358,7 @@ class LinearSystem(System):
         B_aug = np.concatenate([B, B2], axis=1)
 
         self.A, B_aug = zoh(A, B_aug, self.Ts)
-        self.B = np.reshape(B_aug[:, 1], (-1, 1))
+        self.B = np.reshape(B_aug[:, 0], (-1, 1))
         self.B2 = np.reshape(B_aug[:, 1], (-1, 1))
 
         self.C, self.D = C, D
@@ -312,9 +370,10 @@ class LinearSystem(System):
 
         self._set_noise(**kwargs)
         self._set_initial_states(x0=x0)
+        self._init_constraints()
 
     def __repr__(self) -> str:
-        info = "Linear system at"
+        info = "Linear system"
         return info
 
     def _f(self, x0: np.ndarray, p: np.ndarray, w: np.ndarray = None) -> np.ndarray:
@@ -335,3 +394,32 @@ class LinearSystem(System):
         assert y.shape == (self.p, 1)
 
         return y
+
+    def ctrl(self):
+        C = self.B
+
+        for ord in range(1, self.n):
+            C_block = np.linalg.matrix_power(self.A, ord) @ self.B
+            C = np.concatenate([C, C_block], axis=1)
+
+        return C
+
+    def obsv(self):
+        O = self.C
+
+        for ord in range(1, self.n):
+            O_block = self.C @ np.linalg.matrix_power(self.A, ord)
+            O = np.concatenate([O, O_block], axis=0)
+
+        return O
+
+    def lag(self):
+        O = self.C
+
+        for ord in range(1, self.n):
+            O_block = self.C @ np.linalg.matrix_power(self.A, ord)
+            O = np.concatenate([O, O_block], axis=0)
+            if np.linalg.matrix_rank(O) == self.n:
+                break
+
+        return ord

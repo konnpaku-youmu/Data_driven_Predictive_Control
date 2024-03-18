@@ -6,14 +6,18 @@ import casadi as cs
 import matplotlib.pyplot as plt
 
 
-def forward_euler(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
-    n_states = A.shape[1]
+# def forward_euler(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
+#     n_states = A.shape[1]
 
-    Ad = np.eye(n_states) + Ts * A
-    Bd = Ts * B
+#     Ad = np.eye(n_states) + Ts * A
+#     Bd = Ts * B
 
-    return Ad, Bd
+#     return Ad, Bd
 
+def forward_euler(f, Ts) -> Callable:
+    def fw_eul(x0,p):
+        return x0 + f(x0,p) * Ts
+    return fw_eul
 
 def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
     em_upper = np.hstack((A, B))
@@ -23,6 +27,8 @@ def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
                           np.zeros((B.shape[1], B.shape[1]))))
 
     em = np.vstack((em_upper, em_lower))
+
+    
     ms = linalg.expm(Ts * em)
 
     # Dispose of the lower rows
@@ -34,9 +40,16 @@ def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
     return Ad, Bd
 
 
-def runge_kutta(order: int, f: cs.Function):
-
-    ...
+def rk4(f: cs.Function, Ts: float) -> Callable:
+    def rk4_dyn(x0,p):
+        s_1 = f(x0, p)
+        s_2 = f(x0 + (Ts / 2) * s_1, p)
+        s_3 = f(x0 + (Ts / 2) * s_2, p)
+        s_4 = f(x0 + Ts * s_3, p)
+        x_next = x0 + (Ts / 6) * (s_1 + 2*s_2 + 2*s_3 + s_4)
+        return x_next 
+    
+    return rk4_dyn
 
 
 def hankelize(vec: np.ndarray, L: int) -> np.ndarray:
@@ -75,16 +88,16 @@ def pagerize(vec: np.ndarray, L: int, S: int = None) -> np.ndarray:
 
 def generate_road_profile(length: int, samples: int, Ts: float, type: str = "step"):
 
-    d = np.linspace(0, length, samples+1)
+    d = np.linspace(5, length+5, samples+1)
     profile = np.zeros_like(d)
 
     if type == "step":
-        pos = int(samples / 2)
-        profile[pos:] = 0.05 # A 5cm high step
+        pos = int(samples / 4)
+        profile[pos:] = 0.1 # A 5cm high step
     elif type == "bump":
         ...
     elif type == "wave":
-        profile = np.maximum(0.05*np.sin(0.1*np.pi*d), 0) # Rectified sine wave, height = 5cm
+        profile = np.maximum(0.1*np.sin(0.05*np.pi*d), 0) # Rectified sine wave, height = 10cm
     
     # differentiate the profile
     d_profile = np.array([(profile[i] - profile[i-1])/Ts for i in range(1, samples+1)])
@@ -96,7 +109,6 @@ def generate_road_profile(length: int, samples: int, Ts: float, type: str = "ste
 class Bound:
     lb: np.ndarray = None
     ub: np.ndarray = None
-
 
 class RndSetpoint:
     def __init__(self, n_output, n_steps, trac_states: list,
@@ -134,9 +146,5 @@ class Plotter:
 
 
 if __name__ == "__main__":
-    v = np.linspace([1, 1], [10, 10], 50)
-    H = hankelize(np.atleast_3d(v), 5)
-    P = pagerize(np.atleast_3d(v), 5, 2)
-    print(P.shape, H.shape)
-    plt.matshow(P)
-    plt.show()
+    x = np.array([[0], [0], [0], [0]])
+
