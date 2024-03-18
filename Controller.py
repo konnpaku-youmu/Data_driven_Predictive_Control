@@ -2,6 +2,7 @@ import numpy as np
 from enum import Enum
 from scipy import linalg
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 from typing import Callable, List
 from dataclasses import dataclass, field
 
@@ -79,22 +80,22 @@ class OpenLoop(Controller):
         return inst
 
     def __set_input_sequence(self, u: np.ndarray) -> None:
-        self.u = u
+        self.u = np.atleast_3d(u)
 
-    def __rnd_input_seq(self, length: int, lbu: np.ndarray, ubu: np.ndarray, switch_prob: float = 0.6) -> None:
+    def __rnd_input_seq(self, length: int, lbu: np.ndarray, ubu: np.ndarray, switch_prob: float = 0.7) -> None:
         assert (lbu.shape == ubu.shape)
 
-        self.u = np.ones([length, lbu.shape[0], ubu.shape[1]])
+        self.u = np.zeros([length, lbu.shape[0], ubu.shape[1]])
 
         for k in range(length):
             if np.random.rand() <= switch_prob:
-                self.u[k] = np.random.uniform(-400, 400, [1, 1])
+                self.u[k] = np.random.uniform(lbu/2, ubu/2, self.u.shape[1:])
             else:
                 self.u[k] = self.u[k-1]
 
     def __call__(self, x: np.ndarray, k: int) -> np.ndarray:
         u = self.u[0]
-        self.u = np.roll(self.u, -1)
+        self.u = np.roll(self.u, -1, axis=0)
         return u, None
 
 
@@ -146,6 +147,7 @@ class LQRController(Controller):
 
 class MPC(Controller):
     controller_type = ControllerType.PREDICTIVE
+    name = "MPC"
 
     def __init__(self, model: System,
                  horizon: int,
@@ -170,7 +172,7 @@ class MPC(Controller):
         self.Pf = kwargs["Pf"]
 
         self.enforce_term = enforce_term
-        self.Yf = self.__compute_invariant_set()
+        # self.Yf = self.__compute_invariant_set()
 
         self.problem = None
         self.solver = None
@@ -217,13 +219,13 @@ class MPC(Controller):
         for k in range(self.horizon):
             uk = opt_vars["u", k]
             wk = np.zeros((self.model.m2, 1))
-            
+
             y = self.model._output(x, uk)
 
             cost += y.T@Q@y + uk.T@R@uk
 
-            x = self.model._f(x, uk, wk)
-        
+            x = self.model._f(x0=x, p=uk, w=wk)
+
             state_constraints.append(y)
             lbu.append(lb_inputs)
             ubu.append(ub_inputs)
@@ -306,7 +308,7 @@ class MPC(Controller):
         if isinstance(self.model, LinearSystem):
             A, B = self.model.A, self.model.B
         elif isinstance(self.model, NonlinearSystem):
-            ...
+            raise ValueError()
 
         Q = np.eye(self.model.n) * 3e2
 
@@ -349,9 +351,23 @@ class MPC(Controller):
 
         return opti_u[0], opti_u[self.model.m:]
 
+    def plot_loss(self, axis=None, **pltargs) -> None:
+        pltargs.setdefault("linewidth", 1)
+
+        y = self.model.get_y()
+        length = y.shape[0]
+        plot_range = np.linspace(
+            0, length*self.model.Ts, length, endpoint=False)
+
+        axis.semilogy(plot_range, np.array(self.objective)[
+                      :, 0, 0], label=r"$f$:{{{0}}}, $N = {{{1}}}$".format(self.name, self.horizon))
+        axis.set_xlim(0,  y.shape[0]*self.model.Ts)
+        axis.legend()
+
 
 class DeePC(Controller):
     controller_type = ControllerType.PREDICTIVE
+    name = "DeePC"
 
     def __init__(self, model: System, T_ini: int, horizon: int,
                  init_law: Controller, init_len: int = None, data_mat: SMStruct = SMStruct.HANKEL, **kwargs) -> None:
@@ -374,6 +390,8 @@ class DeePC(Controller):
         self.horizon = horizon
         self.init_ctrl = init_law
         self.sm_struct = data_mat
+
+        self.plot_excitation = False
 
         self.Q = kwargs["Q"]
         self.R = kwargs["R"]
@@ -405,7 +423,7 @@ class DeePC(Controller):
             if self.sm_struct == SMStruct.HANKEL:
                 self.init_len = (nu + 1) * (L + nx) - 1
             elif self.sm_struct == SMStruct.PAGE:
-                self.init_len = 2*L*((nu+1)*(nx+1)-1)
+                self.init_len = L*((nu+1)*(nx+1)-1)
 
         self.ref = np.zeros([self.init_len, ny, 1])
         if self.init_ctrl.closed_loop:
@@ -413,8 +431,12 @@ class DeePC(Controller):
                                    np.array([[[-1], [1]]]))
             self.ref = cloop_sp()
 
+        # initial excitation
         self.model.simulate(
             self.init_len, control_law=self.init_ctrl, reference=None)
+        
+        if self.plot_excitation:
+            self.plot_init_excitation()
 
         self.__set_constraints()
         cost = self.loss()
@@ -461,16 +483,7 @@ class DeePC(Controller):
 
         if isinstance(self.model, LinearSystem) and not self.model.noisy:
             A = vertcat(U_p, Y_p, U_f, Y_f)
-
-            # U, s, V = np.linalg.svd(A)
-
-            # U[:, 10:] = 0
-            # s[10:] = 0
-            # V[10:, :] = 0
-
-            # import scipy.linalg
-
-            # A = U@scipy.linalg.diagsvd(s, *A.shape)@V
+            U, S, V = np.linalg.svd(A)
 
             b = vertcat(*self.opt_p['u_ini'],
                         *self.opt_p['y_ini'],
@@ -478,12 +491,7 @@ class DeePC(Controller):
                         *self.opti_vars['y'])
         else:
             A = vertcat(U_p, Y_p, U_f)
-
             U, S, V = np.linalg.svd(A)
-            U = U[:, :9] 
-            V = V[:9, :] 
-            S = np.diag(S[:9])
-            A = U@S@V
 
             b = vertcat(*self.opt_p['u_ini'],
                         *self.opt_p['y_ini'],
@@ -503,6 +511,8 @@ class DeePC(Controller):
         self.lbx['u'], self.ubx['u'] = self.input_bound.lb, self.input_bound.ub
         self.lbx['y'], self.ubx['y'] = self.output_bound.lb, self.output_bound.ub
 
+        return
+
     def loss(self) -> cs.MX:
         loss = 0
         Q, R, = self.Q, self.R
@@ -512,7 +522,7 @@ class DeePC(Controller):
             u_k = self.opti_vars["u", k]
 
             loss += sum1(y_k.T @ Q @ y_k) + sum1(u_k.T @ R @ u_k)
-        
+
         y_N = self.opti_vars["y", self.horizon-1]
         u_N = self.opti_vars["u", self.horizon-1]
         loss += sum1(y_N.T @ (10*Q) @ y_N) + sum1(u_N.T @ (10*R) @ u_N)
@@ -533,6 +543,7 @@ class DeePC(Controller):
     def __update_ref(self, r: np.ndarray) -> None:
         self.ref = np.concatenate(
             [self.ref, np.atleast_3d(r.squeeze())], axis=0)
+        return
 
     def __call__(self, x: np.ndarray, r: np.ndarray) -> np.ndarray:
 
@@ -580,6 +591,31 @@ class DeePC(Controller):
     def get_total_loss(self):
         return np.sum(np.array(self.objective))
 
+    def plot_init_excitation(self) -> None:
+        fig = plt.figure(figsize=(12,4))
+        ax0 = fig.add_subplot(1, 2, 1)
+        ax1 = fig.add_subplot(1, 2, 2)
+        ax2 = plt.twinx(ax1)
+        fig.tight_layout()
+
+        ax0.set_title(r"\textbf{Excitation control input}")
+        ax0.set_ylabel(r"{Force ($N$)}")
+        ax1.set_title(r"\textbf{System output: Excitation phase}")
+        ax1.set_ylabel(r"{Displacement ($m$)}")
+        ax2.set_ylabel(r"{Acceleration ($\sfrac{m}{s^2}$)}")
+
+        self.model.plot_control_input(axis=ax0)
+
+        self.model.plot_trajectory(axis=ax1, states=[0], color="b",
+                                   label_prefix=r"Excitation")
+        ax1.legend(loc=3, framealpha=1)
+
+        self.model.plot_trajectory(axis=ax2, states=[1], color="g",
+                                   label_prefix=r"Excitation")
+        ax2.legend(loc=0, framealpha=1)
+
+        return
+
     def plot_reference(self, axis=None, **pltargs) -> None:
         pltargs.setdefault('linewidth', 1)
 
@@ -597,14 +633,33 @@ class DeePC(Controller):
 
         axis.legend()
 
+        return
+
     def plot_loss(self, axis=None, **pltargs) -> None:
         pltargs.setdefault("linewidth", 1)
 
         y = self.model.get_y()
-        length = y.shape[0] - self.init_len
+        length = y.shape[0]
         plot_range = np.linspace(
-            self.init_len*self.model.Ts, length*self.model.Ts, length, endpoint=False)
+            0, length*self.model.Ts, length, endpoint=False)
 
-        axis.semilogy(plot_range, np.array(self.objective)[:, 0, 0], label="$f$")
+        axis.semilogy(plot_range, np.array(self.objective)[
+                      :, 0, 0], label=r"$f$:{{{0}}}, $N = {{{1}}}$, $T_{{ini}} = {{{2}}}$".format(self.name, self.horizon, self.T_ini))
         axis.set_xlim(0,  y.shape[0]*self.model.Ts)
         axis.legend()
+
+        return 
+
+    def plot_data_matt_svd(self, axis=None, **pltargs) -> None:
+        U, S, V = np.linalg.svd(self.A)
+        fig, [axu, axs, axv] = plt.subplots(1, 3, figsize=(16, 5))
+        fig.tight_layout()
+
+        axu.matshow(U, cmap="coolwarm")
+        axu.set_xlabel(r"$U$")
+        axs.plot(S)
+        axs.set_xlabel(r"$S$")
+        axv.matshow(V, cmap="coolwarm")
+        axv.set_xlabel(r"$V^\mathsf{T}$")
+        
+        return 

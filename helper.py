@@ -6,14 +6,18 @@ import casadi as cs
 import matplotlib.pyplot as plt
 
 
-def forward_euler(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
-    n_states = A.shape[1]
+# def forward_euler(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
+#     n_states = A.shape[1]
 
-    Ad = np.eye(n_states) + Ts * A
-    Bd = Ts * B
+#     Ad = np.eye(n_states) + Ts * A
+#     Bd = Ts * B
 
-    return Ad, Bd
+#     return Ad, Bd
 
+def forward_euler(f, Ts) -> Callable:
+    def fw_eul(x0,p):
+        return x0 + f(x0,p) * Ts
+    return fw_eul
 
 def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
     em_upper = np.hstack((A, B))
@@ -36,9 +40,16 @@ def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
     return Ad, Bd
 
 
-def runge_kutta(order: int, f: cs.Function):
-
-    ...
+def rk4(f: cs.Function, Ts: float) -> Callable:
+    def rk4_dyn(x0,p):
+        s_1 = f(x0, p)
+        s_2 = f(x0 + (Ts / 2) * s_1, p)
+        s_3 = f(x0 + (Ts / 2) * s_2, p)
+        s_4 = f(x0 + Ts * s_3, p)
+        x_next = x0 + (Ts / 6) * (s_1 + 2*s_2 + 2*s_3 + s_4)
+        return x_next 
+    
+    return rk4_dyn
 
 
 def hankelize(vec: np.ndarray, L: int) -> np.ndarray:
