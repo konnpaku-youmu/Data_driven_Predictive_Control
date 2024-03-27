@@ -2,6 +2,7 @@ import numpy as np
 import casadi as cs
 from casadi.casadi import sin, cos, tan
 import matplotlib.pyplot as plt
+import yaml
 
 from SysBase import *
 
@@ -37,8 +38,13 @@ class ActiveSuspension(LinearSystem):
         D = np.array([[0.],
                       [1/m1]])
 
-        super().__init__(A, B, C, D, x0, B2, **kwargs)
+        σ_x = np.diag([0, 0, 0, 0])
+        σ_y = np.diag([1e-4, 1e-2])
 
+        super().__init__(A, B, B2, C, D, x0,
+                         noisy=False, σ_x=σ_x, σ_y=σ_y,
+                         **kwargs)
+        
         self.output_constraint.lb[0] = -0.127
         self.output_constraint.ub[0] = 0.127
         self.output_constraint.lb[1] = -8
@@ -47,9 +53,8 @@ class ActiveSuspension(LinearSystem):
         self.input_constraint.lb[0] = -1000
         self.input_constraint.ub[0] = 1000
 
+        self.input_names = [r"$F$"]
         self.output_names = [r"$\Delta x_{s}$", r"$\ddot{x}_1$"]
-
-        self.noisy = False
 
 
 class SimpleBicycle(NonlinearSystem):
@@ -86,7 +91,7 @@ class SimpleBicycle(NonlinearSystem):
     cm2: float = 0.001295
     cr1: float = 0.1629
     cr2: float = 0.02133
-    
+
     def __init__(self, x0: np.ndarray, **kwargs) -> None:
 
         x = cs.SX.sym("x", 4)
@@ -105,26 +110,14 @@ class SimpleBicycle(NonlinearSystem):
         self.input_constraint.lb[1] = -0.384
         self.input_constraint.ub[1] = 0.384  # max steering angle (radians)
 
-    def _dynamics_sym(self) -> cs.SX:
+        # self.output_constraint.lb[0] = -0.1
+        # self.output_constraint.ub[0] = 0.1
+        # self.output_constraint.lb[1] = -0.1
+        # self.output_constraint.ub[1] = 0.1
+
+    def _dynamics_num(self, x, u, w) -> cs.SX:
         '''
-        x: [x, y, ψ, δ]
-        '''
-
-        lf, lr = self.axis_front, self.axis_rear
-        a, μ = self.acceleration, self.friction
-
-        β = cs.arctan2(lf*cs.tan(self._sym_u[1]), lf + lr)
-
-        x_dot = self._sym_x[3] * cs.cos(self._sym_x[2] + β)
-        y_dot = self._sym_x[3] * cs.sin(self._sym_x[2] + β)
-        ψ_dot = self._sym_x[3] * cs.sin(β) / lr
-        δ_dot = a * self._sym_u[0] - μ * self._sym_x[3]
-
-        return cs.vertcat(x_dot, y_dot, ψ_dot, δ_dot)
-    
-    def _dynamics_num(self, x, u) -> np.ndarray:
-        '''
-        x: [x, y, ψ, δ]
+        x: [x, y, ψ, v]
         '''
         lf, lr = self.axis_front, self.axis_rear
         a, μ = self.acceleration, self.friction
@@ -137,7 +130,7 @@ class SimpleBicycle(NonlinearSystem):
         δ_dot = a * u[0] - μ * x[3]
 
         return cs.vertcat(x_dot, y_dot, ψ_dot, δ_dot)
-    
+
     def plot_phasespace(self,
                         *,
                         axis: plt.Axes,
@@ -155,9 +148,13 @@ class SimpleBicycle(NonlinearSystem):
             # plot the first two states by default
             states = [0, 1]
 
-        axis.plot(y[:, states[0], :], y[:, states[1], :], linestyle="--", **pltargs)
+        axis.plot(y[:, states[0], :], y[:, states[1], :], linestyle="--",
+                  label=r"Vehicle Trajectory", **pltargs)
+        axis.set_xlabel(r"$x$ (m)")
+        axis.set_ylabel(r"$y$ (m)")
 
         axis.legend()
+
 
 
 class IPNonlinear(NonlinearSystem):

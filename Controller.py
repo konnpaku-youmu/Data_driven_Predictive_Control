@@ -1,5 +1,4 @@
 import numpy as np
-from enum import Enum
 from scipy import linalg
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
@@ -10,25 +9,8 @@ import casadi as cs
 from casadi.tools import *
 
 from SysModels import System, LinearSystem, NonlinearSystem
-from helper import hankelize, pagerize, RndSetpoint, Bound
+from helper import hankelize, pagerize, RndSetpoint, Bound, ControllerType, SMStruct, OCPType
 from rcracers.utils.geometry import Polyhedron, Ellipsoid
-
-
-class ControllerType(Enum):
-    VANILLA = 0
-    PREDICTIVE = 1
-
-
-class SMStruct(Enum):
-    HANKEL = 0
-    PARTIAL_HANKEL = 1
-    PAGE = 2
-
-
-class OCPType(Enum):
-    CANONICAL = 0
-    REGULARIZED = 1
-
 
 @dataclass
 class InvSetResults:
@@ -82,7 +64,7 @@ class OpenLoop(Controller):
     def __set_input_sequence(self, u: np.ndarray) -> None:
         self.u = np.atleast_3d(u)
 
-    def __rnd_input_seq(self, length: int, lbu: np.ndarray, ubu: np.ndarray, switch_prob: float = 0.7) -> None:
+    def __rnd_input_seq(self, length: int, lbu: np.ndarray, ubu: np.ndarray, switch_prob: float = 0.8) -> None:
         assert (lbu.shape == ubu.shape)
 
         self.u = np.zeros([length, lbu.shape[0], ubu.shape[1]])
@@ -404,8 +386,8 @@ class DeePC(Controller):
 
         self.problem = None
         self.solver = None
-        self.opt_p = None  # Trajectory constraint: RHS()
-        self.opti_vars = None
+        self.opt_params = None  # Trajectory constraint: RHS()
+        self.opt_vars = None
         self.traj_constraint = None
         self.ref = None    # Tracking reference
 
@@ -423,7 +405,7 @@ class DeePC(Controller):
             if self.sm_struct == SMStruct.HANKEL:
                 self.init_len = (nu + 1) * (L + nx) - 1
             elif self.sm_struct == SMStruct.PAGE:
-                self.init_len = L*((nu+1)*(nx+1)-1)
+                self.init_len = L*((nu*L+1)*(nx+1)-1)
 
         self.ref = np.zeros([self.init_len, ny, 1])
         if self.init_ctrl.closed_loop:
@@ -434,17 +416,17 @@ class DeePC(Controller):
         # initial excitation
         self.model.simulate(
             self.init_len, control_law=self.init_ctrl, reference=None)
-        
+
         if self.plot_excitation:
             self.plot_init_excitation()
 
         self.__set_constraints()
         cost = self.loss()
 
-        self.problem = {"x": self.opti_vars,
+        self.problem = {"x": self.opt_vars,
                         "f": cost,
                         "g": self.traj_constraint,
-                        "p": self.opt_p}
+                        "p": self.opt_params}
 
         opts = {"ipopt.tol": 1e-12,
                 "ipopt.max_iter": 200,
@@ -463,47 +445,61 @@ class DeePC(Controller):
             M_u = hankelize(self.model.get_u(), L)
             M_y = hankelize(self.model.get_y(), L)
         elif self.sm_struct == SMStruct.PAGE:
-            M_u = pagerize(self.model.get_u(), L, L//2-2)
-            M_y = pagerize(self.model.get_y(), L, L//2-2)
+            M_u = pagerize(self.model.get_u(), L, L)
+            M_y = pagerize(self.model.get_y(), L, L)
 
         # Split Hu and Hy into Hp and Hf (ETH paper Eq.5)
         U_p, U_f = np.split(M_u, [self.model.m * self.T_ini], axis=0)
         Y_p, Y_f = np.split(M_y, [self.model.p * self.T_ini], axis=0)
-        self.Y_f = Y_f
+
+        self.Y_p, self.Y_f = Y_p, Y_f
         self.U_f = U_f
 
-        self.opt_p = struct_symMX([entry('u_ini', shape=(self.model.m), repeat=self.T_ini),
-                                   entry('y_ini', shape=(self.model.p), repeat=self.T_ini),
-                                   entry('ref', shape=(self.model.p))])
-        self.opti_vars = struct_symMX([entry("u", shape=(self.model.m), repeat=self.horizon),
-                                       entry("y", shape=(self.model.p), repeat=self.horizon),
-                                       entry("g", shape=[U_f.shape[1]])])
-        self.opti_vars_num = self.opti_vars(0)
-        self.opt_p_num = self.opt_p(0)
+        self.opt_params = struct_symMX([entry('u_ini', shape=(self.model.m), repeat=self.T_ini),
+                                        entry('y_ini', shape=(self.model.p), repeat=self.T_ini),
+                                        entry('ref', shape=(self.model.p))])
+        
+        self.opt_vars = struct_symMX([entry("u", shape=(self.model.m), repeat=self.horizon),
+                                      entry("y", shape=(self.model.p), repeat=self.horizon),
+                                      entry("g", shape=[U_f.shape[1]])])
+
+        self.var_val = self.opt_vars(0)
+        self.param_val = self.opt_params(0)
 
         if isinstance(self.model, LinearSystem) and not self.model.noisy:
-            A = vertcat(U_p, Y_p, U_f, Y_f)
-            U, S, V = np.linalg.svd(A)
+            
+            A = vertcat(U_p, 
+                        U_f, 
+                        Y_p, 
+                        Y_f)
+            
+            # U, S, V = np.linalg.svd(A)
 
-            b = vertcat(*self.opt_p['u_ini'],
-                        *self.opt_p['y_ini'],
-                        *self.opti_vars['u'],
-                        *self.opti_vars['y'])
+            # U = U[:, :10]
+            # S = np.diag(S[:10])
+            # V = V[:10, :]
+
+            # import scipy.linalg as la
+            # A = U@S@V
+
+            b = vertcat(*self.opt_params['u_ini'],
+                        *self.opt_vars['u'],
+                        *self.opt_params['y_ini'],
+                        *self.opt_vars['y'])
         else:
-            A = vertcat(U_p, Y_p, U_f)
-            U, S, V = np.linalg.svd(A)
+            A = vertcat(U_p, U_f, Y_f)
 
-            b = vertcat(*self.opt_p['u_ini'],
-                        *self.opt_p['y_ini'],
-                        *self.opti_vars['u'])
+            b = vertcat(*self.opt_params['u_ini'],
+                        *self.opt_vars['u'],
+                        *self.opt_vars['y'])
 
-        g = self.opti_vars['g']
+        g = self.opt_vars['g']
         self.traj_constraint = A@g - b
 
-        self.A = A
+        self.data_mat = A
 
         # input constraints and output constraints
-        optim_var = self.opti_vars
+        optim_var = self.opt_vars
 
         self.lbx = optim_var(-np.inf)
         self.ubx = optim_var(np.inf)
@@ -518,24 +514,23 @@ class DeePC(Controller):
         Q, R, = self.Q, self.R
 
         for k in range(self.horizon - 1):
-            y_k = self.opti_vars["y", k]
-            u_k = self.opti_vars["u", k]
+            y_k = self.opt_vars["y", k]
+            u_k = self.opt_vars["u", k]
 
             loss += sum1(y_k.T @ Q @ y_k) + sum1(u_k.T @ R @ u_k)
 
-        y_N = self.opti_vars["y", self.horizon-1]
-        u_N = self.opti_vars["u", self.horizon-1]
-        loss += sum1(y_N.T @ (10*Q) @ y_N) + sum1(u_N.T @ (10*R) @ u_N)
+        y_N = self.opt_vars["y", -1]
+        u_N = self.opt_vars["u", -1]
+        loss += sum1(y_N.T @ (10*Q) @ y_N) + sum1(u_N.T @ (R) @ u_N)
 
         if self.model.noisy or not isinstance(self.model, LinearSystem):
             # regularization terms
             print("Add regularization")
-            g = self.opti_vars["g"]
-            Y_f = vertcat(self.Y_f)
-            y = vertcat(*self.opti_vars['y'])
-            u_k = self.opti_vars["u", k]
-            esti_err = Y_f@g - y
-            loss += self.λ_s * (cs.norm_2(esti_err)**2 + sum1(u_k.T @ R @ u_k))
+            g = self.opt_vars["g"]
+            Y_p = self.Y_p
+            y_ini = vertcat(*self.opt_params['y_ini'])
+            esti_err = Y_p@g - y_ini
+            loss += self.λ_s * cs.norm_2(esti_err)**2
             loss += self.λ_g * cs.norm_2(g)**2
 
         return loss
@@ -549,18 +544,18 @@ class DeePC(Controller):
 
         y_ini, u_ini = self.__build_ini_traj()
 
-        self.opt_p_num['u_ini'] = vertsplit(u_ini)
-        self.opt_p_num['y_ini'] = vertsplit(y_ini)
-        self.opt_p_num['ref'] = vertsplit(r.squeeze())
+        self.param_val['u_ini'] = vertsplit(u_ini)
+        self.param_val['y_ini'] = vertsplit(y_ini)
+        self.param_val['ref'] = vertsplit(r.squeeze())
         self.__update_ref(r)
 
-        res = self.solver(p=self.opt_p_num, lbg=0, ubg=0,
+        res = self.solver(p=self.param_val, lbg=0, ubg=0,
                           lbx=self.lbx, ubx=self.ubx)
 
         # Extract optimal solution
-        self.opti_vars_num.master = res['x']
+        self.var_val.master = res['x']
         loss_val = res['f']
-        opti_g = self.opti_vars_num['g']
+        opti_g = self.var_val['g']
 
         self.objective.append(loss_val)
 
@@ -592,7 +587,7 @@ class DeePC(Controller):
         return np.sum(np.array(self.objective))
 
     def plot_init_excitation(self) -> None:
-        fig = plt.figure(figsize=(12,4))
+        fig = plt.figure(figsize=(12, 4))
         ax0 = fig.add_subplot(1, 2, 1)
         ax1 = fig.add_subplot(1, 2, 2)
         ax2 = plt.twinx(ax1)
@@ -648,18 +643,28 @@ class DeePC(Controller):
         axis.set_xlim(0,  y.shape[0]*self.model.Ts)
         axis.legend()
 
-        return 
+        return
+    
+    def plot_data_mat_cov(self, axis=None, **pltargs) -> None:
+        Σ = np.cov(self.data_mat)
+        fig, axc = plt.subplots(1, 1, figsize=(5, 5))
+        fig.tight_layout()
 
-    def plot_data_matt_svd(self, axis=None, **pltargs) -> None:
-        U, S, V = np.linalg.svd(self.A)
+        axc.matshow(Σ, cmap="coolwarm")
+        axc.set_xlabel(r"$\Sigma$")
+
+        return
+
+    def plot_data_mat_svd(self, axis=None, **pltargs) -> None:
+        U, S, V = np.linalg.svd(self.data_mat)
         fig, [axu, axs, axv] = plt.subplots(1, 3, figsize=(16, 5))
         fig.tight_layout()
 
-        axu.matshow(U, cmap="coolwarm")
+        axu.matshow((U), cmap="coolwarm")
         axu.set_xlabel(r"$U$")
         axs.plot(S)
         axs.set_xlabel(r"$S$")
         axv.matshow(V, cmap="coolwarm")
         axv.set_xlabel(r"$V^\mathsf{T}$")
-        
-        return 
+
+        return

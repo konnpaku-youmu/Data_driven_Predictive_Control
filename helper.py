@@ -1,4 +1,5 @@
 import numpy as np
+from enum import Enum
 from typing import Tuple, Callable
 from dataclasses import dataclass
 from scipy import linalg
@@ -15,9 +16,10 @@ import matplotlib.pyplot as plt
 #     return Ad, Bd
 
 def forward_euler(f, Ts) -> Callable:
-    def fw_eul(x0,p):
-        return x0 + f(x0,p) * Ts
+    def fw_eul(x0, p, w):
+        return x0 + f(x0, p, w) * Ts
     return fw_eul
+
 
 def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
     em_upper = np.hstack((A, B))
@@ -28,7 +30,6 @@ def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
 
     em = np.vstack((em_upper, em_lower))
 
-    
     ms = linalg.expm(Ts * em)
 
     # Dispose of the lower rows
@@ -41,14 +42,14 @@ def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
 
 
 def rk4(f: cs.Function, Ts: float) -> Callable:
-    def rk4_dyn(x0,p):
-        s_1 = f(x0, p)
-        s_2 = f(x0 + (Ts / 2) * s_1, p)
-        s_3 = f(x0 + (Ts / 2) * s_2, p)
-        s_4 = f(x0 + Ts * s_3, p)
+    def rk4_dyn(x0, p, w):
+        s_1 = f(x0, p, w)
+        s_2 = f(x0 + (Ts / 2) * s_1, p, w)
+        s_3 = f(x0 + (Ts / 2) * s_2, p, w)
+        s_4 = f(x0 + Ts * s_3, p, w)
         x_next = x0 + (Ts / 6) * (s_1 + 2*s_2 + 2*s_3 + s_4)
-        return x_next 
-    
+        return x_next
+
     return rk4_dyn
 
 
@@ -93,22 +94,40 @@ def generate_road_profile(length: int, samples: int, Ts: float, type: str = "ste
 
     if type == "step":
         pos = int(samples / 4)
-        profile[pos:] = 0.1 # A 5cm high step
+        profile[pos:] = 0.1  # A 5cm high step
     elif type == "bump":
         ...
     elif type == "wave":
-        profile = np.maximum(0.1*np.sin(0.05*np.pi*d), 0) # Rectified sine wave, height = 10cm
-    
+        profile = np.maximum(0.1*np.sin(0.05*np.pi*d), 0)  # Rectified sine wave, height = 10cm
+
     # differentiate the profile
     d_profile = np.array([(profile[i] - profile[i-1])/Ts for i in range(1, samples+1)])
     d_profile = np.atleast_3d(d_profile.squeeze()).reshape([samples, -1, 1])
-    
+
     return profile, d_profile
+
 
 @dataclass
 class Bound:
     lb: np.ndarray = None
     ub: np.ndarray = None
+
+class ControllerType(Enum):
+    VANILLA = 0
+    PREDICTIVE = 1
+
+
+class SMStruct(Enum):
+    HANKEL = 0
+    PARTIAL_HANKEL = 1
+    PAGE = 2
+
+
+class OCPType(Enum):
+    CANONICAL = 0
+    REGULARIZED = 1
+
+
 
 class RndSetpoint:
     def __init__(self, n_output, n_steps, trac_states: list,
@@ -147,4 +166,3 @@ class Plotter:
 
 if __name__ == "__main__":
     x = np.array([[0], [0], [0], [0]])
-

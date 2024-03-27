@@ -48,7 +48,7 @@ class System:
     def __repr__(self) -> str:
         raise NotImplementedError()
 
-    def _init_constraints(self):
+    def _init_constraints(self, xb: Bound = None, ub: Bound = None, yb: Bound = None):
         self.state_constraint.ub = np.ones((self.n, 1)) * np.infty
         self.state_constraint.lb = -np.ones((self.n, 1)) * np.infty
         self.output_constraint.ub = np.ones((self.p, 1)) * np.infty
@@ -118,7 +118,7 @@ class System:
 
     def _process_noise(self) -> np.ndarray:
         mean = np.zeros(self.n)
-        return np.multivariate_normal(mean, self.w, size=[1]).T
+        return np.random.multivariate_normal(mean, self.w, size=[1]).T
 
     def _measurement_noise(self) -> np.ndarray:
         mean = np.zeros(self.p)
@@ -173,8 +173,8 @@ class System:
         for k in track(range(n_steps), description="Simulation ...", total=n_steps):
             x_hat = observer(self.__y[-1])
             uk, u_pred = control_law(x_hat, reference[k])
-            x_next = self._f(x0=self.__x[-1], p=uk, w=disturbance[k])
-            yk = self._output(x_next, uk)
+            x_next = self._f(x0=self.__x[-1], p=uk, w=disturbance[k]) + self._process_noise()
+            yk = self._output(x_next, uk) + self._measurement_noise()
 
             # Time update
             self.__update_x(x_next)
@@ -250,7 +250,8 @@ class System:
             axis.step(plot_range, y[:, i, :],
                       label=lbl, **pltargs)
 
-        # axis.legend(loc="upper right")
+        axis.legend(loc="upper right")
+        # axis.hlines(0, xmin=0, xmax=10)
         axis.set_xlabel(r"{Time(s)}")
 
     def plot_phasespace(self,
@@ -309,11 +310,7 @@ class NonlinearSystem(System):
         self.p = outputs.shape[0]
         self.C = C if C is not None else np.eye(self.n)  # output matrix
 
-        self._sym_x = states
-        self._sym_u = inputs
-        self._sym_y = outputs
-
-        self.__dynamics = self._dynamics_sym()
+        # self.__dynamics = self._dynamics_sym()
         # self.__F = self.__discrete_dynamics()
         self.__F = rk4(self._dynamics_num, self.Ts)
 
@@ -325,23 +322,12 @@ class NonlinearSystem(System):
         info = "Nonlinear system"
         return info
 
-    def _dynamics_sym(self) -> cs.MX:
+    def _dynamics_num(self, x, u, w) -> cs.SX:
         # Abstract method to be overrided
         raise NotImplementedError()
-
-    def _dynamics_num(self) -> np.ndarray:
-        # Abstract method to be overrided
-        raise NotImplementedError()
-
-    def __discrete_dynamics(self) -> cs.Function:
-        DAE = {"x": self._sym_x,
-               "p": self._sym_u,
-               "ode": self.__dynamics}
-        opts = {"tf": self.Ts}
-        return cs.integrator('F', 'cvodes', DAE, opts)
 
     def _f(self, x0, p, w) -> np.ndarray:
-        x_next = self.__F(x0=x0, p=p)
+        x_next = self.__F(x0=x0, p=p, w=w)
         # x_next = x_next["xf"]
         # return x_next.full()
         return x_next
@@ -351,22 +337,25 @@ class NonlinearSystem(System):
 
 
 class LinearSystem(System):
-    def __init__(self, A: np.ndarray, B: np.ndarray,
-                 C: np.ndarray, D: np.ndarray, x0: np.ndarray, B2: np.ndarray = None, **kwargs) -> None:
+    def __init__(self, A: np.ndarray, B1: np.ndarray, B2: np.ndarray,
+                 C: np.ndarray, D: np.ndarray, 
+                 x0: np.ndarray, **kwargs) -> None:
+        
         super().__init__(**kwargs)
 
-        B_aug = np.concatenate([B, B2], axis=1)
+        B_aug = np.concatenate([B1, B2], axis=1)
 
         self.A, B_aug = zoh(A, B_aug, self.Ts)
         self.B = np.reshape(B_aug[:, 0], (-1, 1))
         self.B2 = np.reshape(B_aug[:, 1], (-1, 1))
-
         self.C, self.D = C, D
 
         self.n = A.shape[1]
-        self.m = B.shape[1]
+        self.m = B1.shape[1]
         self.m2 = B2.shape[1]
         self.p = C.shape[0]
+
+        self._f = self._dynamics
 
         self._set_noise(**kwargs)
         self._set_initial_states(x0=x0)
@@ -376,7 +365,7 @@ class LinearSystem(System):
         info = "Linear system"
         return info
 
-    def _f(self, x0: np.ndarray, p: np.ndarray, w: np.ndarray = None) -> np.ndarray:
+    def _dynamics(self, x0: np.ndarray, p: np.ndarray, w: np.ndarray = None) -> np.ndarray:
 
         assert x0.shape == (self.n, 1), "Current state vector ∈ {}".format(x0.shape)  # sanity check
         assert p.shape == (self.m, 1), "Control vector ∈ {}".format(p.shape)  # sanity check

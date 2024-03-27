@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from helper import generate_road_profile
+from helper import generate_road_profile, SMStruct
 from Controller import LQRController, MPC, OpenLoop, DeePC
 import numpy as np
 
@@ -146,7 +146,7 @@ def test_lqr():
     plt.show()
 
 
-def test_all():
+def test_susp():
     dist, v, Ts = 50, 5, 0.05
     t_sim = dist / v
     n_steps = int(t_sim/Ts)
@@ -168,6 +168,8 @@ def test_all():
 
     suspension = ActiveSuspension(x0=x, Ts=Ts)
 
+    print(suspension.lag())
+
     σ_w, σ_v, σ_p = 0.025, 0.04, 0.025
     kalman = KF(suspension, x, σ_w=σ_w, σ_v=σ_v, σ_p=σ_p)
 
@@ -183,22 +185,6 @@ def test_all():
     ax2.set_ylabel(r"{Acceleration ($\sfrac{m}{s^2}$)}")
     ax3.set_title(r"\textbf{Actuator force}")
     ax3.set_ylabel(r"{Force ($N$)}")
-
-    ### LQR ###
-    # lqr = LQRController(suspension, Q=Q_lqr, R=R)
-
-    # suspension.rst(x)
-    # suspension.simulate(n_steps,
-    #                     control_law=lqr,
-    #                     observer=None,
-    #                     reference=None,
-    #                     disturbance=d_profile)
-
-    # suspension.plot_trajectory(axis=ax1, states=[0],
-    #                             label_prefix=r"LQR")
-    # suspension.plot_trajectory(axis=ax2, states=[1],
-    #                             label_prefix=r"LQR")
-    # suspension.plot_control_input(axis=ax3)
 
     ### MPC ###
     horizon = 5
@@ -221,14 +207,16 @@ def test_all():
 
     ### DeePC ###
     T_ini = 5
-    λ_s, λ_g = 5e3, 2e2
+    λ_s, λ_g = 2e3, 5e2
 
     suspension.rst(x)
     excitation = OpenLoop.rnd_input(suspension, n_steps)
-    dpc = DeePC(suspension, T_ini=T_ini, horizon=horizon,
-                init_law=excitation, λ_s=λ_s, λ_g=λ_g, Q=Q_pc, R=R)
+    dpc = DeePC(suspension, T_ini=T_ini, horizon=horizon, 
+                data_mat=SMStruct.HANKEL,
+                init_law=excitation, 
+                λ_s=λ_s, λ_g=λ_g, Q=Q_pc, R=R)
+    
     suspension.rst(x)
-
     suspension.simulate(n_steps,
                         control_law=dpc,
                         reference=np.zeros((n_steps, suspension.p, 1)),
@@ -240,10 +228,10 @@ def test_all():
     suspension.plot_control_input(axis=ax3, trim_exci=True)
 
     dpc.plot_loss(ax_loss)
-    dpc.plot_data_matt_svd()
+    dpc.plot_data_mat_cov()
+    dpc.plot_data_mat_svd()
 
     plt.show()
-
 
 def sim_parellel(n_steps, x, Ts, d_profile, λ_s, λ_g, params):
 
@@ -265,7 +253,6 @@ def sim_parellel(n_steps, x, Ts, d_profile, λ_s, λ_g, params):
 
     return params, loss
 
-
 def test_simple_bicycle():
     Ts = 0.05
     n_steps = 100
@@ -278,7 +265,7 @@ def test_simple_bicycle():
 
     vehicle = SimpleBicycle(x0=x, Ts=Ts)
     u = np.vstack([0.5*np.ones(n_steps),
-                  [0.1 * np.sin(0.5*np.pi*np.linspace(0, Ts*n_steps, n_steps))]]).T
+                  [0.2 * np.sin(0.5*np.pi*np.linspace(0, Ts*n_steps, n_steps))]]).T
 
     test_policy = OpenLoop.given_input_seq(vehicle, u)
 
@@ -289,9 +276,8 @@ def test_simple_bicycle():
 
     plt.show()
 
-
 def simple_bicycle_mpc():
-    Ts, n_steps = 0.05, 100
+    Ts, n_steps = 0.1, 100
 
     x = np.array([[0.6], [-0.3], [0], [0]])
 
@@ -302,7 +288,7 @@ def simple_bicycle_mpc():
 
     vehicle = SimpleBicycle(x0=x, Ts=Ts)
 
-    horizon = 20
+    horizon = 10
     Q = np.diag([1.5, 10, 0.06, 0.01])
     R = np.diag([1, 0.1])
 
@@ -316,14 +302,15 @@ def simple_bicycle_mpc():
     vehicle.plot_control_input(axis=ax3)
 
     vehicle.rst(x0=x)
-    T_ini = 25
-    λ_s, λ_g = 2e3, 1e3
+    T_ini = 10
+    λ_s, λ_g = 5, 1
     excitation = OpenLoop.rnd_input(vehicle, n_steps)
 
     dpc = DeePC(vehicle, T_ini=T_ini,
                 Q=Q, R=R,
                 λ_s=λ_s, λ_g=λ_g,
                 horizon=horizon,
+                data_mat=SMStruct.HANKEL,
                 init_law=excitation)
 
     vehicle.rst(x0=x)
@@ -334,11 +321,13 @@ def simple_bicycle_mpc():
     vehicle.plot_phasespace(axis=ax1, states=[0, 1])
     vehicle.plot_control_input(axis=ax3)
 
+    dpc.plot_data_mat_cov()
+    dpc.plot_data_mat_svd()
+
     plt.show()
 
     return
 
-
 if __name__ == "__main__":
-    # test_simple_bicycle()
+    # test_susp()
     simple_bicycle_mpc()
