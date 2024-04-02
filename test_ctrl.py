@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
-from helper import generate_road_profile, SMStruct
-from Controller import LQRController, MPC, OpenLoop, DeePC
+from helper import generate_road_profile, SMStruct, Track
+from Controller import LQRController, MPC, OpenLoop, DeePC, MPCC
 import numpy as np
 
 from multiprocessing import Pool, Lock, Manager, current_process
@@ -8,6 +8,7 @@ from functools import partial
 
 from SysBase import *
 from SysModels import ActiveSuspension, SimpleBicycle
+from VehicleModel import RacingCar
 from StateEstimator import KF
 
 from rcracers.utils.geometry import plot_polytope
@@ -211,11 +212,11 @@ def test_susp():
 
     suspension.rst(x)
     excitation = OpenLoop.rnd_input(suspension, n_steps)
-    dpc = DeePC(suspension, T_ini=T_ini, horizon=horizon, 
+    dpc = DeePC(suspension, T_ini=T_ini, horizon=horizon,
                 data_mat=SMStruct.HANKEL,
-                init_law=excitation, 
+                init_law=excitation,
                 λ_s=λ_s, λ_g=λ_g, Q=Q_pc, R=R)
-    
+
     suspension.rst(x)
     suspension.simulate(n_steps,
                         control_law=dpc,
@@ -232,6 +233,7 @@ def test_susp():
     dpc.plot_data_mat_svd()
 
     plt.show()
+
 
 def sim_parellel(n_steps, x, Ts, d_profile, λ_s, λ_g, params):
 
@@ -252,6 +254,7 @@ def sim_parellel(n_steps, x, Ts, d_profile, λ_s, λ_g, params):
     loss = dpc.get_total_loss()
 
     return params, loss
+
 
 def test_simple_bicycle():
     Ts = 0.05
@@ -276,10 +279,11 @@ def test_simple_bicycle():
 
     plt.show()
 
-def simple_bicycle_mpc():
-    Ts, n_steps = 0.1, 100
 
-    x = np.array([[0.6], [-0.3], [0], [0]])
+def simple_bicycle_mpc():
+    Ts, n_steps = 0.1, 500
+
+    x = np.array([[6], [1], [np.pi], [0], [0], [0]])
 
     fig1 = plt.figure(figsize=(14, 6))
     ax1 = fig1.add_subplot(1, 2, 1)
@@ -288,46 +292,65 @@ def simple_bicycle_mpc():
 
     vehicle = SimpleBicycle(x0=x, Ts=Ts)
 
-    horizon = 10
-    Q = np.diag([1.5, 10, 0.06, 0.01])
-    R = np.diag([1, 0.1])
+    horizon = 20
+    Q = np.diag([50, 50, 0.0, 2.0])
+    R = np.diag([0.02, 5])
+
+    mpcc = MPCC(vehicle,
+               horizon=horizon,
+               Q=Q, R=R, Pf=2*Q)
+    mpcc.build()
+
+    ref = Track("track.svg", density=250)
+    print(ref.traj.length())
+
+    vehicle.simulate(n_steps=n_steps,
+                     control_law=mpcc,
+                     reference=ref)
+    ref.plot_traj(axis=ax1)
+    vehicle.plot_phasespace(axis=ax1, states=[0, 1])
+    vehicle.plot_trajectory(axis=ax3, states=[3])
+
+    plt.show()
+
+    return
+
+
+def racing_car():
+
+    fig1 = plt.figure(figsize=(14, 6))
+    ax1 = fig1.add_subplot(1, 2, 1)
+    ax3 = fig1.add_subplot(1, 2, 2)
+    fig1.tight_layout()
+
+    Ts = 0.05
+    n_steps = 200
+
+    x = np.array([[38], [2.7], [np.pi], [5], [0], [0], [0], [0]])
+    vehicle = RacingCar(x0=x, Ts=Ts)
+
+    horizon = 20
+    Q = np.diag([50, 50, 0, 10, 20, 0.0])
+    R = np.diag([0.01, 0.01])
+
+    ref = Track("track.svg", density=50)
 
     mpc = MPC(vehicle,
               horizon=horizon,
               Q=Q, R=R)
 
     vehicle.simulate(n_steps=n_steps,
-                     control_law=mpc)
+                     control_law=mpc,
+                     reference=ref)
+
+    ref.plot_traj(axis=ax1)
     vehicle.plot_phasespace(axis=ax1, states=[0, 1])
     vehicle.plot_control_input(axis=ax3)
-
-    vehicle.rst(x0=x)
-    T_ini = 10
-    λ_s, λ_g = 5, 1
-    excitation = OpenLoop.rnd_input(vehicle, n_steps)
-
-    dpc = DeePC(vehicle, T_ini=T_ini,
-                Q=Q, R=R,
-                λ_s=λ_s, λ_g=λ_g,
-                horizon=horizon,
-                data_mat=SMStruct.HANKEL,
-                init_law=excitation)
-
-    vehicle.rst(x0=x)
-    vehicle.simulate(n_steps,
-                     control_law=dpc,
-                     reference=np.zeros((n_steps, vehicle.p, 1)))
-
-    vehicle.plot_phasespace(axis=ax1, states=[0, 1])
-    vehicle.plot_control_input(axis=ax3)
-
-    dpc.plot_data_mat_cov()
-    dpc.plot_data_mat_svd()
 
     plt.show()
 
     return
 
+
 if __name__ == "__main__":
-    # test_susp()
     simple_bicycle_mpc()

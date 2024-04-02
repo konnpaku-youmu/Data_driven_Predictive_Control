@@ -6,7 +6,10 @@ from scipy import linalg
 import casadi as cs
 import matplotlib.pyplot as plt
 
+from xml.dom import minidom
+from svgpathtools import parse_path
 
+from casadi import *
 # def forward_euler(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
 #     n_states = A.shape[1]
 
@@ -14,6 +17,7 @@ import matplotlib.pyplot as plt
 #     Bd = Ts * B
 
 #     return Ad, Bd
+
 
 def forward_euler(f, Ts) -> Callable:
     def fw_eul(x0, p, w):
@@ -112,6 +116,7 @@ class Bound:
     lb: np.ndarray = None
     ub: np.ndarray = None
 
+
 class ControllerType(Enum):
     VANILLA = 0
     PREDICTIVE = 1
@@ -126,7 +131,6 @@ class SMStruct(Enum):
 class OCPType(Enum):
     CANONICAL = 0
     REGULARIZED = 1
-
 
 
 class RndSetpoint:
@@ -164,5 +168,60 @@ class Plotter:
         ...
 
 
+class Track(object):
+    def __init__(self, svg_file: str, density: int = 100) -> None:
+
+        self.traj = self.__parse_svg(svg_file)
+        self.nsteps = density
+        self.step = 0
+        self.horizon = 20
+
+    def __parse_svg(self, svg_file: str):
+        path = minidom.parse(svg_file)
+        tag = path.getElementsByTagName("path")
+        d_string = tag[0].attributes['d'].value
+
+        path = parse_path(d_string)
+
+        return path.scaled(0.1, 0.1)
+
+    def __call__(self):
+        
+        pts = np.ndarray(shape=[self.horizon, 4, 1])
+
+        step = self.step
+
+        for i in range(self.horizon):
+            progress = (step / self.nsteps) % 1.0
+            pt = self.traj.point(progress)
+            pt = np.array([[np.real(pt)],
+                         [np.imag(pt)],
+                         [0],
+                         [0]])
+            pts[i, :, :] = pt
+            step += 1
+        
+        self.step += 1
+
+        return pts
+
+    def plot_traj(self, axis: plt.Axes):
+        tval = np.linspace(0, 1, self.nsteps, endpoint=False)
+        pts = np.ndarray(shape=[self.nsteps, 2, 1])
+        for i, t in enumerate(tval):
+            pt = self.traj.point(t)
+            pt = np.array([[np.real(pt)],
+                           [np.imag(pt)]])
+            pts[i, :, :] = pt
+        axis.scatter(pts[:, 0, :], pts[:, 1, :], marker="x", color="#7e7e7e")
+        return
+
+
 if __name__ == "__main__":
-    x = np.array([[0], [0], [0], [0]])
+    z = SX.sym('z', 2)
+    x = SX.sym('x', 2)
+    g0 = sin(x+z)
+    g1 = cos(x-z)
+    g = Function('g', [z, x], [g0, g1])
+    G = rootfinder('G', 'newton', g)
+    print(np.array(G(1, 1)))

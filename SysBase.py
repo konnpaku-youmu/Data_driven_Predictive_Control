@@ -4,6 +4,7 @@ from rich.progress import track
 import numpy as np
 import casadi as cs
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 from helper import forward_euler, zoh, rk4, Bound
 
 
@@ -149,7 +150,7 @@ class System:
                  *,
                  control_law: Callable = None,
                  observer: Callable = None,
-                 reference: np.ndarray = None,
+                 reference: Callable = None,
                  disturbance: np.ndarray = None) -> None:
 
         self.n_steps = n_steps
@@ -165,14 +166,16 @@ class System:
             observer = full_state_sensor
 
         if reference is None:
-            reference = np.zeros([n_steps, self.n, 1])
+            def zero_ref():
+                return np.zeros([self.p, 1])
+            reference = zero_ref
 
         if disturbance is None:
             disturbance = np.zeros([n_steps, self.m2, 1])
 
         for k in track(range(n_steps), description="Simulation ...", total=n_steps):
             x_hat = observer(self.__y[-1])
-            uk, u_pred = control_law(x_hat, reference[k])
+            uk, u_pred = control_law(x_hat, reference())
             x_next = self._f(x0=self.__x[-1], p=uk, w=disturbance[k]) + self._process_noise()
             yk = self._output(x_next, uk) + self._measurement_noise()
 
@@ -227,7 +230,7 @@ class System:
                         axis: plt.Axes,
                         states: list,
                         trim_exci: bool = False,
-                        label_prefix="",
+                        label_prefix: str = "",
                         **pltargs):
         pltargs.setdefault('linewidth', 1.5)
 
@@ -255,15 +258,18 @@ class System:
         axis.set_xlabel(r"{Time(s)}")
 
     def plot_phasespace(self,
-                        *,
                         axis: plt.Axes,
+                        *,
                         states: list,
                         trim_exci: bool = False,
                         **pltargs):
-        pltargs.setdefault('linewidth', 1.2)
-        axis.set_aspect("equal", adjustable="box")
+        pltargs.setdefault('linewidth', 3)
+        # axis.set_aspect("equal", adjustable="box")
+
+        sim_t = self.n_steps * self.Ts
 
         y = self.get_y()
+        t = np.linspace(0, sim_t, self.n_steps)
         if trim_exci:
             y = y[-self.n_steps:, :, :]
 
@@ -271,18 +277,28 @@ class System:
             # plot the first two states by default
             states = [0, 1]
 
-        axis.plot(y[:, states[0], :], y[:, states[1], :], **pltargs)
+        points = np.array([y[:, states[0], :], y[:, states[1], :]]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
-        axis.legend()
+        norm = plt.Normalize(0, sim_t)
+
+        lc = LineCollection(segments, cmap='coolwarm_r', norm=norm)
+        lc.set_array(t)
+        lc.set_linewidth(1.5)
+
+        line = axis.add_collection(lc)
+
+        axis.margins(0.1, 0.1)
+
+        return
 
     def plot_control_input(self,
                            *,
                            axis: plt.Axes,
                            trim_exci: bool = False,
+                           label_prefix: str = "",
                            **pltargs):
         pltargs.setdefault("linewidth", 0.7)
-        pltargs.setdefault("linestyle", '--')
-        # pltargs.setdefault("color", 'g')
 
         u = self.get_u()
         if trim_exci:
@@ -292,8 +308,13 @@ class System:
             0, u.shape[0]*self.Ts, u.shape[0], endpoint=False)
 
         for i in range(self.m):
+            if self.input_names is not None:
+                lbl = self.input_names[i] + ": " + label_prefix
+            else:
+                lbl = r"$y_{}$".format(i) + label_prefix
+
             axis.step(plot_range, u[:, i, :],
-                      label=r"$u_{}$".format(i), **pltargs)
+                      label=lbl, **pltargs)
 
         axis.legend()
         axis.set_xlabel(r"Time(s)")
@@ -338,9 +359,9 @@ class NonlinearSystem(System):
 
 class LinearSystem(System):
     def __init__(self, A: np.ndarray, B1: np.ndarray, B2: np.ndarray,
-                 C: np.ndarray, D: np.ndarray, 
+                 C: np.ndarray, D: np.ndarray,
                  x0: np.ndarray, **kwargs) -> None:
-        
+
         super().__init__(**kwargs)
 
         B_aug = np.concatenate([B1, B2], axis=1)

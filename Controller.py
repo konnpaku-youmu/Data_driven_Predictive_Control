@@ -12,6 +12,7 @@ from SysModels import System, LinearSystem, NonlinearSystem
 from helper import hankelize, pagerize, RndSetpoint, Bound, ControllerType, SMStruct, OCPType
 from rcracers.utils.geometry import Polyhedron, Ellipsoid
 
+
 @dataclass
 class InvSetResults:
     n_iter: int = 0
@@ -53,12 +54,20 @@ class OpenLoop(Controller):
         return inst
 
     @classmethod
-    def rnd_input(cls, model: System, length: int):
+    def rnd_input(cls, model: System, length: int,
+                  lb: np.ndarray, ub: np.ndarray):
         inst = cls.__new__(cls)
         super(OpenLoop, inst).__init__(model=model)
+
+        if lb is None:
+            lb = model.input_constraint.lb
+
+        if ub is None:
+            ub = model.input_constraint.ub
+
         inst.__rnd_input_seq(length=length,
-                             lbu=model.input_constraint.lb,
-                             ubu=model.input_constraint.ub)
+                             lbu=lb,
+                             ubu=ub)
         return inst
 
     def __set_input_sequence(self, u: np.ndarray) -> None:
@@ -71,7 +80,7 @@ class OpenLoop(Controller):
 
         for k in range(length):
             if np.random.rand() <= switch_prob:
-                self.u[k] = np.random.uniform(lbu/2, ubu/2, self.u.shape[1:])
+                self.u[k] = np.random.uniform(lbu, ubu, self.u.shape[1:])
             else:
                 self.u[k] = self.u[k-1]
 
@@ -139,8 +148,10 @@ class MPC(Controller):
 
         super().__init__(model)
 
+        kwargs.setdefault("state_bound", self.model.state_constraint)
         kwargs.setdefault("output_bound", self.model.output_constraint)
         kwargs.setdefault("input_bound", self.model.input_constraint)
+
         kwargs.setdefault("Q", np.eye(self.model.p, self.model.p) * 10)
         kwargs.setdefault("R", np.eye(self.model.m, self.model.m) * 1e-2)
         kwargs.setdefault("Pf", np.eye(self.model.p, self.model.p) * 10)
@@ -154,12 +165,12 @@ class MPC(Controller):
         self.Pf = kwargs["Pf"]
 
         self.enforce_term = enforce_term
-        # self.Yf = self.__compute_invariant_set()
 
         self.problem = None
         self.solver = None
 
-        self.state_bound: Bound = kwargs["output_bound"]
+        self.state_bound: Bound = kwargs["state_bound"]
+        self.output_bound: Bound = kwargs["output_bound"]
         self.input_bound: Bound = kwargs["input_bound"]
 
         self.opt_params: struct_symMX = None
@@ -168,28 +179,36 @@ class MPC(Controller):
         self.var_vals = None
         self.ref = None    # Tracking reference
 
-        self.solver, self.bounds = self.__build_mpc_problem()
+        self.solver = None
+        self.bounds = None
 
         self.objective = []
+    
+    def build(self) -> None:
+        self.solver, self.bounds = self.__build_mpc_problem()
+        return
 
     def __build_mpc_problem(self) -> None:
+        print("Building MPC problem ...")
 
         x0 = cs.SX.sym(f"x0", (self.model.n, 1))
         x = x0
 
         lb_states = self.state_bound.lb
         ub_states = self.state_bound.ub
+        lb_output = self.output_bound.lb
+        ub_output = self.output_bound.ub
         lb_inputs = self.input_bound.lb
         ub_inputs = self.input_bound.ub
 
-        state_constraints = []
+        state_cons, output_cons = [], []
         lbu, ubu, lbx, ubx = [], [], [], []
         cost = 0
 
-        Q, R = self.Q, self.R
+        Q, R, Pf = self.Q, self.R, self.Pf
 
         opt_params = struct_symMX([entry('x0', shape=(self.model.n, 1)),
-                                   entry('ref', shape=(self.model.n, 1))])
+                                   entry('ref', shape=(self.model.p, 1))])
 
         opt_vars = struct_symMX([entry("u", shape=(self.model.m), repeat=self.horizon)])
 
@@ -202,31 +221,29 @@ class MPC(Controller):
             uk = opt_vars["u", k]
             wk = np.zeros((self.model.m2, 1))
 
-            y = self.model._output(x, uk)
+            y = self.model._output(x, uk) - opt_params['ref']
 
             cost += y.T@Q@y + uk.T@R@uk
 
             x = self.model._f(x0=x, p=uk, w=wk)
 
-            state_constraints.append(y)
             lbu.append(lb_inputs)
             ubu.append(ub_inputs)
+
+            output_cons.append(y)
+            lbx.append(lb_output)
+            ubx.append(ub_output)
+
+            output_cons.append(x)
             lbx.append(lb_states)
             ubx.append(ub_states)
 
         y = self.model._output(x, np.zeros((self.model.m, 1)))
-        cost += y.T@(10*Q)@y
-
-        if self.enforce_term and isinstance(self.Yf, Polyhedron):
-            state_constraints.append(self.Yf.H @ x - self.Yf.h)
-            lbx.append(-np.ones_like(self.Yf.h) * np.infty)
-            ubx.append(np.zeros_like(self.Yf.h))
-        elif self.enforce_term and isinstance(self.Yf, Ellipsoid):
-            ...
+        cost += y.T@Pf@y
 
         self.problem = {"x": opt_vars,  # optimized variables: input u
                         "f": cost,
-                        "g": cs.vertcat(*state_constraints),
+                        "g": cs.vertcat(*output_cons),
                         "p": opt_params}
 
         opts = {"ipopt.tol": 1e-12,
@@ -245,82 +262,18 @@ class MPC(Controller):
 
         return solver, bounds
 
-    def __build_feasible_output_set(self, K) -> Polyhedron:
-
-        C, D = self.model.C, self.model.D
-
-        H = np.vstack([np.eye(self.model.p),
-                       -np.eye(self.model.p)]) @ (C + D@K)
-
-        h = np.vstack([self.model.output_constraint.ub,
-                       -self.model.output_constraint.lb])
-
-        return Polyhedron.from_inequalities(H, h)
-
-    def __build_feasible_input_set(self, K: np.ndarray) -> Polyhedron:
-        H = np.vstack([np.eye(self.model.m),
-                       -np.eye(self.model.m)]) @ K
-
-        h = np.vstack([self.model.input_constraint.ub,
-                       -self.model.input_constraint.lb])
-
-        return Polyhedron.from_inequalities(H, h)
-
-    def __compute_pre(self, set: Polyhedron, Acl: np.ndarray):
-        return set.from_inequalities(set.H@Acl, set.h)
-
-    def __invariant_iter(self, Ω_0: Polyhedron, pre: Callable, max_iter: int):
-        result = InvSetResults()
-        result.iterations.append(Ω_0)
-
-        Ω = Ω_0
-        while result.n_iter <= max_iter:
-            Ω_next = pre(Ω).intersect(Ω).canonicalize()
-            result.iterations.append(Ω_next)
-            if Ω_next == Ω:
-                result.success = True
-                break
-            Ω = Ω_next
-            result.increment()
-
-        return result
-
-    def __compute_invariant_set(self, max_iter: int = 200):
-
-        if isinstance(self.model, LinearSystem):
-            A, B = self.model.A, self.model.B
-        elif isinstance(self.model, NonlinearSystem):
-            raise ValueError()
-
-        Q = np.eye(self.model.n) * 3e2
-
-        # find the LQR solution of the problem
-        P = linalg.solve_discrete_are(A, B, Q, self.R)
-        K = -np.linalg.inv(self.R + B.T@P@B)@B.T@P@A
-
-        Xu = self.__build_feasible_input_set(K)
-        Xy = self.__build_feasible_output_set(K)
-
-        X_init = Xy.intersect(Xu)
-        Ω_0 = X_init
-
-        Acl = A + B@K
-
-        def pre(Ω):
-            return self.__compute_pre(Ω, Acl)
-
-        result = self.__invariant_iter(Ω_0, pre, max_iter)
-
-        return result.solution
-
     def __update_ref(self, r: np.ndarray) -> None:
-        self.ref = np.concatenate(
-            [self.ref, np.atleast_3d(r.squeeze())], axis=0)
+        if self.ref is None:
+            self.ref = np.zeros([1, r.shape[0], r.shape[1]])
+            self.ref[0, :, :] = r
+        else:
+            self.ref = np.concatenate([self.ref,
+                                       np.atleast_3d(r.squeeze())], axis=0)
 
     def __call__(self, x: np.ndarray, r: np.ndarray) -> np.ndarray:
         self.param_vals['x0'] = x
         self.param_vals['ref'] = vertsplit(r.squeeze())
-        # self.__update_ref(r)
+        self.__update_ref(r)
 
         res = self.solver(p=self.param_vals, **self.bounds)
 
@@ -408,10 +361,6 @@ class DeePC(Controller):
                 self.init_len = L*((nu*L+1)*(nx+1)-1)
 
         self.ref = np.zeros([self.init_len, ny, 1])
-        if self.init_ctrl.closed_loop:
-            cloop_sp = RndSetpoint(ny, self.init_len, 0,
-                                   np.array([[[-1], [1]]]))
-            self.ref = cloop_sp()
 
         # initial excitation
         self.model.simulate(
@@ -458,7 +407,7 @@ class DeePC(Controller):
         self.opt_params = struct_symMX([entry('u_ini', shape=(self.model.m), repeat=self.T_ini),
                                         entry('y_ini', shape=(self.model.p), repeat=self.T_ini),
                                         entry('ref', shape=(self.model.p))])
-        
+
         self.opt_vars = struct_symMX([entry("u", shape=(self.model.m), repeat=self.horizon),
                                       entry("y", shape=(self.model.p), repeat=self.horizon),
                                       entry("g", shape=[U_f.shape[1]])])
@@ -467,20 +416,11 @@ class DeePC(Controller):
         self.param_val = self.opt_params(0)
 
         if isinstance(self.model, LinearSystem) and not self.model.noisy:
-            
-            A = vertcat(U_p, 
-                        U_f, 
-                        Y_p, 
+
+            A = vertcat(U_p,
+                        U_f,
+                        Y_p,
                         Y_f)
-            
-            # U, S, V = np.linalg.svd(A)
-
-            # U = U[:, :10]
-            # S = np.diag(S[:10])
-            # V = V[:10, :]
-
-            # import scipy.linalg as la
-            # A = U@S@V
 
             b = vertcat(*self.opt_params['u_ini'],
                         *self.opt_vars['u'],
@@ -644,7 +584,7 @@ class DeePC(Controller):
         axis.legend()
 
         return
-    
+
     def plot_data_mat_cov(self, axis=None, **pltargs) -> None:
         Σ = np.cov(self.data_mat)
         fig, axc = plt.subplots(1, 1, figsize=(5, 5))
@@ -668,3 +608,102 @@ class DeePC(Controller):
         axv.set_xlabel(r"$V^\mathsf{T}$")
 
         return
+
+
+class MPCC(MPC):
+    def __init__(self, model: System, horizon: int, *, enforce_term: bool = False, **kwargs) -> None:
+        super().__init__(model, horizon, enforce_term=enforce_term, **kwargs)
+
+        self.contour_dim = 2
+    
+    def build(self) -> None:
+        self.solver, self.bounds = self.__build_mpc_problem()
+        return
+
+    def __build_mpc_problem(self) -> None:
+        print("Building MPCC problem ...")
+        x0 = cs.SX.sym(f"x0", (self.model.n, 1))
+        x = x0
+
+        lb_states = self.state_bound.lb
+        ub_states = self.state_bound.ub
+        lb_output = self.output_bound.lb
+        ub_output = self.output_bound.ub
+        lb_inputs = self.input_bound.lb
+        ub_inputs = self.input_bound.ub
+
+        state_cons, output_cons = [], []
+        lbu, ubu, lbx, ubx = [], [], [], []
+        cost = 0
+
+        Q, R, Pf = self.Q, self.R, self.Pf
+
+        opt_params = struct_symMX([entry('x0', shape=(self.model.n, 1)),
+                                   entry('ref', shape=(self.model.p, 1), repeat=self.horizon)])
+
+        opt_vars = struct_symMX([entry("u", shape=(self.model.m), repeat=self.horizon)])
+
+        self.param_vals = opt_params(0)
+        self.var_vals = opt_vars(0)
+
+        x = opt_params["x0"]
+
+        for k in range(self.horizon):
+            uk = opt_vars["u", k]
+            wk = np.zeros((self.model.m2, 1))
+
+            y = self.model._output(x, uk) - opt_params['ref', k]
+
+            cost += y.T@Q@y + uk.T@R@uk
+
+            x = self.model._f(x0=x, p=uk, w=wk)
+
+            lbu.append(lb_inputs)
+            ubu.append(ub_inputs)
+
+            output_cons.append(y)
+            lbx.append(lb_output)
+            ubx.append(ub_output)
+
+            output_cons.append(x)
+            lbx.append(lb_states)
+            ubx.append(ub_states)
+
+        y = self.model._output(x, np.zeros((self.model.m, 1))) - opt_params['ref', self.horizon-1]
+        cost += y.T@Pf@y
+
+        self.problem = {"x": opt_vars,  # optimized variables: input u
+                        "f": cost,
+                        "g": cs.vertcat(*output_cons),
+                        "p": opt_params}
+
+        opts = {"ipopt.tol": 1e-12,
+                "ipopt.max_iter": 200,
+                "ipopt.print_level": 0,
+                "expand": True,
+                "verbose": False,
+                "print_time": False}
+
+        solver = nlpsol("solver", "ipopt", self.problem, opts)
+
+        bounds = dict(
+            lbx=cs.vertcat(*lbu), ubx=cs.vertcat(*ubu),
+            lbg=cs.vertcat(*lbx), ubg=cs.vertcat(*ubx)
+        )
+
+        return solver, bounds
+
+    def __call__(self, x: np.ndarray, r: np.ndarray) -> np.ndarray:
+        self.param_vals['x0'] = x
+        self.param_vals['ref'] = vertsplit(r.squeeze())
+
+        res = self.solver(p=self.param_vals, **self.bounds)
+
+        # Extract optimal solution
+        self.var_vals.master = res['x']
+        loss_val = res['f']
+        opti_u = self.var_vals['u']
+
+        self.objective.append(loss_val)
+
+        return opti_u[0], opti_u[self.model.m:]
