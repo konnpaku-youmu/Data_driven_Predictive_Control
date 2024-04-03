@@ -18,6 +18,13 @@ from casadi import *
 
 #     return Ad, Bd
 
+def setup_plot():
+    fig1 = plt.figure(figsize=(14, 5))
+    ax1 = fig1.add_subplot(1, 2, 1)
+    ax2 = fig1.add_subplot(1, 2, 2)
+    fig1.tight_layout()
+
+    return ax1, ax2
 
 def forward_euler(f, Ts) -> Callable:
     def fw_eul(x0, p, w):
@@ -174,7 +181,7 @@ class Track(object):
         self.traj = self.__parse_svg(svg_file)
         self.nsteps = density
         self.step = 0
-        self.horizon = 20
+        self.horizon = 15
 
     def __parse_svg(self, svg_file: str):
         path = minidom.parse(svg_file)
@@ -183,11 +190,11 @@ class Track(object):
 
         path = parse_path(d_string)
 
-        return path.scaled(0.1, 0.1)
+        return path.scaled(0.152, 0.152)
 
     def __call__(self):
         
-        pts = np.ndarray(shape=[self.horizon, 4, 1])
+        pts = np.ndarray(shape=[self.horizon, 2, 1])
 
         step = self.step
 
@@ -195,9 +202,7 @@ class Track(object):
             progress = (step / self.nsteps) % 1.0
             pt = self.traj.point(progress)
             pt = np.array([[np.real(pt)],
-                         [np.imag(pt)],
-                         [0],
-                         [0]])
+                         [np.imag(pt)]])
             pts[i, :, :] = pt
             step += 1
         
@@ -213,7 +218,7 @@ class Track(object):
             pt = np.array([[np.real(pt)],
                            [np.imag(pt)]])
             pts[i, :, :] = pt
-        axis.scatter(pts[:, 0, :], pts[:, 1, :], marker="x", color="#7e7e7e")
+        axis.plot(pts[:, 0, :], pts[:, 1, :], linestyle="--", color="#7e7e7e")
         return
 
 

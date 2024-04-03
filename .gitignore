@@ -7,3 +7,4 @@ toy_example/*
 DeePC_example/*
 __pycache__
 *.code-workspace
+*.svg

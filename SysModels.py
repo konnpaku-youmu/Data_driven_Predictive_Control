@@ -1,11 +1,7 @@
 import numpy as np
 import casadi as cs
-from casadi.casadi import sin, cos, tan
-import matplotlib.pyplot as plt
-import yaml
 
 from SysBase import *
-
 
 class ActiveSuspension(LinearSystem):
     def __init__(self, x0: np.ndarray, **kwargs) -> None:
@@ -106,7 +102,7 @@ class SimpleBicycle(NonlinearSystem):
         self.input_names = [r"$\Delta T$", r"$\Delta \delta$"]
         self.output_names = [r"$x$", r"$y$", r"$\psi$", r"$v$"]
 
-        self.state_constraint.lb[3] = -1
+        self.state_constraint.lb[3] = 0
         self.state_constraint.ub[3] = 2  # maximum drive
         self.state_constraint.lb[-2] = -1
         self.state_constraint.ub[-2] = 1  # maximum drive

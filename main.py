@@ -1,15 +1,18 @@
 import matplotlib.pyplot as plt
-from helper import generate_road_profile, SMStruct, Track
-from Controller import LQRController, MPC, OpenLoop, DeePC, MPCC
+from helper import *
+from ControlBase import LQRController, OpenLoop
 import numpy as np
-
-from multiprocessing import Pool, Lock, Manager, current_process
-from functools import partial
 
 from SysBase import *
 from SysModels import ActiveSuspension, SimpleBicycle
 from VehicleModel import RacingCar
 from StateEstimator import KF
+
+from MPC import MPC, MPFC, MPCC
+from DPC import DeePC
+
+# from multiprocessing import Pool, Lock, Manager, current_process
+# from functools import partial
 
 from rcracers.utils.geometry import plot_polytope
 
@@ -281,9 +284,9 @@ def test_simple_bicycle():
 
 
 def simple_bicycle_mpc():
-    Ts, n_steps = 0.1, 500
+    Ts, n_steps = 0.1, 200
 
-    x = np.array([[6], [1], [np.pi], [0], [0], [0]])
+    x = np.array([[5.0], [0.95], [np.pi], [0], [0], [0]])
 
     fig1 = plt.figure(figsize=(14, 6))
     ax1 = fig1.add_subplot(1, 2, 1)
@@ -296,12 +299,12 @@ def simple_bicycle_mpc():
     Q = np.diag([50, 50, 0.0, 2.0])
     R = np.diag([0.02, 5])
 
-    mpcc = MPCC(vehicle,
-               horizon=horizon,
-               Q=Q, R=R, Pf=2*Q)
+    mpcc = MPFC(vehicle,
+                horizon=horizon,
+                Q=Q, R=R, Pf=2*Q)
     mpcc.build()
 
-    ref = Track("track.svg", density=250)
+    ref = Track("track.svg", density=200)
     print(ref.traj.length())
 
     vehicle.simulate(n_steps=n_steps,
@@ -317,40 +320,47 @@ def simple_bicycle_mpc():
 
 
 def racing_car():
-
-    fig1 = plt.figure(figsize=(14, 6))
-    ax1 = fig1.add_subplot(1, 2, 1)
-    ax3 = fig1.add_subplot(1, 2, 2)
-    fig1.tight_layout()
+    
+    ax1, ax2 = setup_plot()
 
     Ts = 0.05
-    n_steps = 200
+    n_steps = 100
+    
+    ref = Track("track.svg", density=580)
+    x0, y0 = ref.traj.point(0).real, np.imag(ref.traj.point(0))
+    dxdy = ref.traj.derivative(0)
+    ψ0 = np.arctan2(dxdy.imag, dxdy.real)
 
-    x = np.array([[38], [2.7], [np.pi], [5], [0], [0], [0], [0]])
+    print(ref.traj.length())
+
+    x = np.array([[x0], [y0], [ψ0], [3], [0], [0], [0], [0]])
     vehicle = RacingCar(x0=x, Ts=Ts)
 
-    horizon = 20
-    Q = np.diag([50, 50, 0, 10, 20, 0.0])
-    R = np.diag([0.01, 0.01])
+    horizon = 15
+    Q = np.diag([25, 25])
+    R = np.diag([1, 5])
 
-    ref = Track("track.svg", density=50)
-
-    mpc = MPC(vehicle,
-              horizon=horizon,
-              Q=Q, R=R)
+    mpfc = MPFC(vehicle,
+                horizon=horizon,
+                Q=Q, R=R, Pf=5*Q)
+    mpfc.build()
 
     vehicle.simulate(n_steps=n_steps,
-                     control_law=mpc,
+                     control_law=mpfc,
                      reference=ref)
 
     ref.plot_traj(axis=ax1)
     vehicle.plot_phasespace(axis=ax1, states=[0, 1])
-    vehicle.plot_control_input(axis=ax3)
+    vehicle.plot_trajectory(axis=ax2, states=[5])
 
     plt.show()
 
     return
 
+def racing_car_dpc():
+    
+    return
 
 if __name__ == "__main__":
-    simple_bicycle_mpc()
+    # simple_bicycle_mpc()
+    racing_car()

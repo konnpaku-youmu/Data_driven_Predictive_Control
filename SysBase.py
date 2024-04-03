@@ -262,9 +262,10 @@ class System:
                         *,
                         states: list,
                         trim_exci: bool = False,
+                        colormap: np.ndarray = None,
                         **pltargs):
         pltargs.setdefault('linewidth', 3)
-        # axis.set_aspect("equal", adjustable="box")
+        axis.set_aspect("equal", adjustable="box")
 
         sim_t = self.n_steps * self.Ts
 
@@ -280,17 +281,25 @@ class System:
         points = np.array([y[:, states[0], :], y[:, states[1], :]]).T.reshape(-1, 1, 2)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
-        norm = plt.Normalize(0, sim_t)
+        if colormap is None:
+            cm = t
+        else:
+            cm = colormap
+        
+        norm = plt.Normalize(np.min(cm), np.max(cm))
 
-        lc = LineCollection(segments, cmap='coolwarm_r', norm=norm)
-        lc.set_array(t)
-        lc.set_linewidth(1.5)
+        lc = LineCollection(segments, cmap='coolwarm', norm=norm)
+        lc.set_array(cm)
+        lc.set_linewidth(2.5)
 
         line = axis.add_collection(lc)
 
         axis.margins(0.1, 0.1)
 
-        return
+        plt.colorbar(line, ax=axis, location="bottom",
+                     shrink = 1.0, label=r"$v_x$")
+
+        return y, t
 
     def plot_control_input(self,
                            *,
