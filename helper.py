@@ -1,11 +1,15 @@
 import numpy as np
+from enum import Enum
 from typing import Tuple, Callable
 from dataclasses import dataclass
 from scipy import linalg
 import casadi as cs
 import matplotlib.pyplot as plt
 
+from xml.dom import minidom
+from svgpathtools import parse_path
 
+from casadi import *
 # def forward_euler(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
 #     n_states = A.shape[1]
 
@@ -14,10 +18,19 @@ import matplotlib.pyplot as plt
 
 #     return Ad, Bd
 
+def setup_plot():
+    fig1 = plt.figure(figsize=(14, 5))
+    ax1 = fig1.add_subplot(1, 2, 1)
+    ax2 = fig1.add_subplot(1, 2, 2)
+    fig1.tight_layout()
+
+    return ax1, ax2
+
 def forward_euler(f, Ts) -> Callable:
-    def fw_eul(x0,p):
-        return x0 + f(x0,p) * Ts
+    def fw_eul(x0, p, w):
+        return x0 + f(x0, p, w) * Ts
     return fw_eul
+
 
 def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
     em_upper = np.hstack((A, B))
@@ -28,7 +41,6 @@ def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
 
     em = np.vstack((em_upper, em_lower))
 
-    
     ms = linalg.expm(Ts * em)
 
     # Dispose of the lower rows
@@ -41,14 +53,14 @@ def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
 
 
 def rk4(f: cs.Function, Ts: float) -> Callable:
-    def rk4_dyn(x0,p):
-        s_1 = f(x0, p)
-        s_2 = f(x0 + (Ts / 2) * s_1, p)
-        s_3 = f(x0 + (Ts / 2) * s_2, p)
-        s_4 = f(x0 + Ts * s_3, p)
+    def rk4_dyn(x0, p, w):
+        s_1 = f(x0, p, w)
+        s_2 = f(x0 + (Ts / 2) * s_1, p, w)
+        s_3 = f(x0 + (Ts / 2) * s_2, p, w)
+        s_4 = f(x0 + Ts * s_3, p, w)
         x_next = x0 + (Ts / 6) * (s_1 + 2*s_2 + 2*s_3 + s_4)
-        return x_next 
-    
+        return x_next
+
     return rk4_dyn
 
 
@@ -93,22 +105,40 @@ def generate_road_profile(length: int, samples: int, Ts: float, type: str = "ste
 
     if type == "step":
         pos = int(samples / 4)
-        profile[pos:] = 0.1 # A 5cm high step
+        profile[pos:] = 0.1  # A 5cm high step
     elif type == "bump":
         ...
     elif type == "wave":
-        profile = np.maximum(0.1*np.sin(0.05*np.pi*d), 0) # Rectified sine wave, height = 10cm
-    
+        profile = np.maximum(0.1*np.sin(0.05*np.pi*d), 0)  # Rectified sine wave, height = 10cm
+
     # differentiate the profile
     d_profile = np.array([(profile[i] - profile[i-1])/Ts for i in range(1, samples+1)])
     d_profile = np.atleast_3d(d_profile.squeeze()).reshape([samples, -1, 1])
-    
+
     return profile, d_profile
+
 
 @dataclass
 class Bound:
     lb: np.ndarray = None
     ub: np.ndarray = None
+
+
+class ControllerType(Enum):
+    VANILLA = 0
+    PREDICTIVE = 1
+
+
+class SMStruct(Enum):
+    HANKEL = 0
+    PARTIAL_HANKEL = 1
+    PAGE = 2
+
+
+class OCPType(Enum):
+    CANONICAL = 0
+    REGULARIZED = 1
+
 
 class RndSetpoint:
     def __init__(self, n_output, n_steps, trac_states: list,
@@ -145,6 +175,58 @@ class Plotter:
         ...
 
 
-if __name__ == "__main__":
-    x = np.array([[0], [0], [0], [0]])
+class Track(object):
+    def __init__(self, svg_file: str, density: int = 100) -> None:
 
+        self.traj = self.__parse_svg(svg_file)
+        self.nsteps = density
+        self.step = 0
+        self.horizon = 15
+
+    def __parse_svg(self, svg_file: str):
+        path = minidom.parse(svg_file)
+        tag = path.getElementsByTagName("path")
+        d_string = tag[0].attributes['d'].value
+
+        path = parse_path(d_string)
+
+        return path.scaled(0.152, 0.152)
+
+    def __call__(self):
+        
+        pts = np.ndarray(shape=[self.horizon, 2, 1])
+
+        step = self.step
+
+        for i in range(self.horizon):
+            progress = (step / self.nsteps) % 1.0
+            pt = self.traj.point(progress)
+            pt = np.array([[np.real(pt)],
+                         [np.imag(pt)]])
+            pts[i, :, :] = pt
+            step += 1
+        
+        self.step += 1
+
+        return pts
+
+    def plot_traj(self, axis: plt.Axes):
+        tval = np.linspace(0, 1, self.nsteps, endpoint=False)
+        pts = np.ndarray(shape=[self.nsteps, 2, 1])
+        for i, t in enumerate(tval):
+            pt = self.traj.point(t)
+            pt = np.array([[np.real(pt)],
+                           [np.imag(pt)]])
+            pts[i, :, :] = pt
+        axis.plot(pts[:, 0, :], pts[:, 1, :], linestyle="--", color="#7e7e7e")
+        return
+
+
+if __name__ == "__main__":
+    z = SX.sym('z', 2)
+    x = SX.sym('x', 2)
+    g0 = sin(x+z)
+    g1 = cos(x-z)
+    g = Function('g', [z, x], [g0, g1])
+    G = rootfinder('G', 'newton', g)
+    print(np.array(G(1, 1)))

@@ -4,6 +4,7 @@ from rich.progress import track
 import numpy as np
 import casadi as cs
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 from helper import forward_euler, zoh, rk4, Bound
 
 
@@ -48,7 +49,7 @@ class System:
     def __repr__(self) -> str:
         raise NotImplementedError()
 
-    def _init_constraints(self):
+    def _init_constraints(self, xb: Bound = None, ub: Bound = None, yb: Bound = None):
         self.state_constraint.ub = np.ones((self.n, 1)) * np.infty
         self.state_constraint.lb = -np.ones((self.n, 1)) * np.infty
         self.output_constraint.ub = np.ones((self.p, 1)) * np.infty
@@ -118,7 +119,7 @@ class System:
 
     def _process_noise(self) -> np.ndarray:
         mean = np.zeros(self.n)
-        return np.multivariate_normal(mean, self.w, size=[1]).T
+        return np.random.multivariate_normal(mean, self.w, size=[1]).T
 
     def _measurement_noise(self) -> np.ndarray:
         mean = np.zeros(self.p)
@@ -149,7 +150,7 @@ class System:
                  *,
                  control_law: Callable = None,
                  observer: Callable = None,
-                 reference: np.ndarray = None,
+                 reference: Callable = None,
                  disturbance: np.ndarray = None) -> None:
 
         self.n_steps = n_steps
@@ -165,16 +166,18 @@ class System:
             observer = full_state_sensor
 
         if reference is None:
-            reference = np.zeros([n_steps, self.n, 1])
+            def zero_ref():
+                return np.zeros([self.p, 1])
+            reference = zero_ref
 
         if disturbance is None:
             disturbance = np.zeros([n_steps, self.m2, 1])
 
         for k in track(range(n_steps), description="Simulation ...", total=n_steps):
             x_hat = observer(self.__y[-1])
-            uk, u_pred = control_law(x_hat, reference[k])
-            x_next = self._f(x0=self.__x[-1], p=uk, w=disturbance[k])
-            yk = self._output(x_next, uk)
+            uk, u_pred = control_law(x_hat, reference())
+            x_next = self._f(x0=self.__x[-1], p=uk, w=disturbance[k]) + self._process_noise()
+            yk = self._output(x_next, uk) + self._measurement_noise()
 
             # Time update
             self.__update_x(x_next)
@@ -227,7 +230,7 @@ class System:
                         axis: plt.Axes,
                         states: list,
                         trim_exci: bool = False,
-                        label_prefix="",
+                        label_prefix: str = "",
                         **pltargs):
         pltargs.setdefault('linewidth', 1.5)
 
@@ -250,19 +253,24 @@ class System:
             axis.step(plot_range, y[:, i, :],
                       label=lbl, **pltargs)
 
-        # axis.legend(loc="upper right")
+        axis.legend(loc="upper right")
+        # axis.hlines(0, xmin=0, xmax=10)
         axis.set_xlabel(r"{Time(s)}")
 
     def plot_phasespace(self,
-                        *,
                         axis: plt.Axes,
+                        *,
                         states: list,
                         trim_exci: bool = False,
+                        colormap: np.ndarray = None,
                         **pltargs):
-        pltargs.setdefault('linewidth', 1.2)
+        pltargs.setdefault('linewidth', 3)
         axis.set_aspect("equal", adjustable="box")
 
+        sim_t = self.n_steps * self.Ts
+
         y = self.get_y()
+        t = np.linspace(0, sim_t, self.n_steps)
         if trim_exci:
             y = y[-self.n_steps:, :, :]
 
@@ -270,18 +278,36 @@ class System:
             # plot the first two states by default
             states = [0, 1]
 
-        axis.plot(y[:, states[0], :], y[:, states[1], :], **pltargs)
+        points = np.array([y[:, states[0], :], y[:, states[1], :]]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
-        axis.legend()
+        if colormap is None:
+            cm = t
+        else:
+            cm = colormap
+        
+        norm = plt.Normalize(np.min(cm), np.max(cm))
+
+        lc = LineCollection(segments, cmap='coolwarm', norm=norm)
+        lc.set_array(cm)
+        lc.set_linewidth(2.5)
+
+        line = axis.add_collection(lc)
+
+        axis.margins(0.1, 0.1)
+
+        plt.colorbar(line, ax=axis, location="bottom",
+                     shrink = 1.0, label=r"$v_x$")
+
+        return y, t
 
     def plot_control_input(self,
                            *,
                            axis: plt.Axes,
                            trim_exci: bool = False,
+                           label_prefix: str = "",
                            **pltargs):
         pltargs.setdefault("linewidth", 0.7)
-        pltargs.setdefault("linestyle", '--')
-        # pltargs.setdefault("color", 'g')
 
         u = self.get_u()
         if trim_exci:
@@ -291,8 +317,13 @@ class System:
             0, u.shape[0]*self.Ts, u.shape[0], endpoint=False)
 
         for i in range(self.m):
+            if self.input_names is not None:
+                lbl = self.input_names[i] + ": " + label_prefix
+            else:
+                lbl = r"$y_{}$".format(i) + label_prefix
+
             axis.step(plot_range, u[:, i, :],
-                      label=r"$u_{}$".format(i), **pltargs)
+                      label=lbl, **pltargs)
 
         axis.legend()
         axis.set_xlabel(r"Time(s)")
@@ -309,11 +340,7 @@ class NonlinearSystem(System):
         self.p = outputs.shape[0]
         self.C = C if C is not None else np.eye(self.n)  # output matrix
 
-        self._sym_x = states
-        self._sym_u = inputs
-        self._sym_y = outputs
-
-        self.__dynamics = self._dynamics_sym()
+        # self.__dynamics = self._dynamics_sym()
         # self.__F = self.__discrete_dynamics()
         self.__F = rk4(self._dynamics_num, self.Ts)
 
@@ -325,23 +352,12 @@ class NonlinearSystem(System):
         info = "Nonlinear system"
         return info
 
-    def _dynamics_sym(self) -> cs.MX:
+    def _dynamics_num(self, x, u, w) -> cs.SX:
         # Abstract method to be overrided
         raise NotImplementedError()
-
-    def _dynamics_num(self) -> np.ndarray:
-        # Abstract method to be overrided
-        raise NotImplementedError()
-
-    def __discrete_dynamics(self) -> cs.Function:
-        DAE = {"x": self._sym_x,
-               "p": self._sym_u,
-               "ode": self.__dynamics}
-        opts = {"tf": self.Ts}
-        return cs.integrator('F', 'cvodes', DAE, opts)
 
     def _f(self, x0, p, w) -> np.ndarray:
-        x_next = self.__F(x0=x0, p=p)
+        x_next = self.__F(x0=x0, p=p, w=w)
         # x_next = x_next["xf"]
         # return x_next.full()
         return x_next
@@ -351,22 +367,25 @@ class NonlinearSystem(System):
 
 
 class LinearSystem(System):
-    def __init__(self, A: np.ndarray, B: np.ndarray,
-                 C: np.ndarray, D: np.ndarray, x0: np.ndarray, B2: np.ndarray = None, **kwargs) -> None:
+    def __init__(self, A: np.ndarray, B1: np.ndarray, B2: np.ndarray,
+                 C: np.ndarray, D: np.ndarray,
+                 x0: np.ndarray, **kwargs) -> None:
+
         super().__init__(**kwargs)
 
-        B_aug = np.concatenate([B, B2], axis=1)
+        B_aug = np.concatenate([B1, B2], axis=1)
 
         self.A, B_aug = zoh(A, B_aug, self.Ts)
         self.B = np.reshape(B_aug[:, 0], (-1, 1))
         self.B2 = np.reshape(B_aug[:, 1], (-1, 1))
-
         self.C, self.D = C, D
 
         self.n = A.shape[1]
-        self.m = B.shape[1]
+        self.m = B1.shape[1]
         self.m2 = B2.shape[1]
         self.p = C.shape[0]
+
+        self._f = self._dynamics
 
         self._set_noise(**kwargs)
         self._set_initial_states(x0=x0)
@@ -376,7 +395,7 @@ class LinearSystem(System):
         info = "Linear system"
         return info
 
-    def _f(self, x0: np.ndarray, p: np.ndarray, w: np.ndarray = None) -> np.ndarray:
+    def _dynamics(self, x0: np.ndarray, p: np.ndarray, w: np.ndarray = None) -> np.ndarray:
 
         assert x0.shape == (self.n, 1), "Current state vector ∈ {}".format(x0.shape)  # sanity check
         assert p.shape == (self.m, 1), "Control vector ∈ {}".format(p.shape)  # sanity check
