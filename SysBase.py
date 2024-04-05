@@ -116,6 +116,11 @@ class System:
             y_pred_k) is np.ndarray else y_pred_k.full()
         self.__pred_y = np.concatenate(
             [self.__pred_y, np.atleast_3d(y_pred_next.squeeze())], axis=0)
+        
+    def _control_noise(self)-> np.ndarray:
+        mean = np.zeros(self.m)
+        σ = np.diag([0.1, 0.1])
+        return np.random.multivariate_normal(mean, σ, size=[1]).T
 
     def _process_noise(self) -> np.ndarray:
         mean = np.zeros(self.n)
@@ -176,6 +181,7 @@ class System:
         for k in track(range(n_steps), description="Simulation ...", total=n_steps):
             x_hat = observer(self.__y[-1])
             uk, u_pred = control_law(x_hat, reference())
+            uk += self._control_noise()
             x_next = self._f(x0=self.__x[-1], p=uk, w=disturbance[k]) + self._process_noise()
             yk = self._output(x_next, uk) + self._measurement_noise()
 

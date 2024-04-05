@@ -20,8 +20,8 @@ class DeePC(Controller):
         kwargs.setdefault("output_bound", self.model.output_constraint)
         kwargs.setdefault("input_bound", self.model.input_constraint)
 
-        kwargs.setdefault("λ_s", 0)
-        kwargs.setdefault("λ_g", 0)
+        kwargs.setdefault("λ_s", 0.5)
+        kwargs.setdefault("λ_g", 0.5)
 
         kwargs.setdefault("Q", np.eye(self.model.p, self.model.p) * 10)
         kwargs.setdefault("R", np.eye(self.model.m, self.model.m) * 1e-2)

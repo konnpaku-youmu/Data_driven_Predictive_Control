@@ -54,7 +54,7 @@ class OpenLoop(Controller):
 
     @classmethod
     def rnd_input(cls, model: System, length: int,
-                  lb: np.ndarray, ub: np.ndarray):
+                  lb: np.ndarray = None, ub: np.ndarray = None):
         inst = cls.__new__(cls)
         super(OpenLoop, inst).__init__(model=model)
 
@@ -79,7 +79,7 @@ class OpenLoop(Controller):
 
         for k in range(length):
             if np.random.rand() <= switch_prob:
-                self.u[k] = np.random.uniform(lbu, ubu, self.u.shape[1:])
+                self.u[k] = np.random.uniform(lbu*0.1, ubu*0.1, self.u.shape[1:])
             else:
                 self.u[k] = self.u[k-1]
 

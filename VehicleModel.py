@@ -50,8 +50,13 @@ class RacingCar(NonlinearSystem):
         self.input_names = [r"$\Delta T$", r"$\Delta \delta$"]
         self.output_names = [r"$x$", r"$y$", r"$\psi$", r"$v_x$", r"$v_y$", r"$\omega$"]
 
+        self.input_constraint.lb[0] = -10
+        self.input_constraint.ub[0] = 10
+        self.input_constraint.lb[1] = -5
+        self.input_constraint.ub[1] = 5
+
         self.state_constraint.lb[3] = 0
-        self.state_constraint.ub[3] = 10
+        self.state_constraint.ub[3] = 5
         self.state_constraint.lb[-2] = 0
         self.state_constraint.ub[-2] = 1  # maximum drive
         self.state_constraint.lb[-1] = -0.384
@@ -100,7 +105,111 @@ class RacingCar(NonlinearSystem):
                                 colormap=y[:, 3, 0],
                                 **pltargs)
 
-        l = 1
+        l = 0.2
+        w = 0.5 * l
+
+        for i in range(0, self.n_steps, 20):
+            vehicle = Rectangle(y[i, :2, :] - np.array([[l/2], [w/2]]), l, w,
+                                angle=180*y[i, 2, :]/np.pi,
+                                rotation_point='center')
+            axis.add_patch(vehicle)
+
+        return
+
+
+class SimpleBicycle(NonlinearSystem):
+    length: float = 0.17  # length of the car (meters)
+    axis_front: float = 0.047  # distance cog and front axis (meters)
+    axis_rear: float = 0.05  # distance cog and rear axis (meters)
+    front: float = 0.08  # distance cog and front (meters)
+    rear: float = 0.08  # distance cog and rear (meters)
+    width: float = 0.08  # width of the car (meters)
+    height: float = 0.055  # height of the car (meters)
+    mass: float = 0.1735  # mass of the car (kg)
+    inertia: float = 18.3e-5  # moment of inertia around vertical (kg*m^2)
+
+    """Pacejka 'Magic Formula' parameters.
+        Used for magic formula: `peak * sin(shape * arctan(stiffness * alpha))`
+        as in Pacejka (2005) 'Tyre and Vehicle Dynamics', p. 161, Eq. (4.6)
+        """
+    # front
+    bf: float = 3.1355  # front stiffness factor
+    cf: float = 2.1767  # front shape factor
+    df: float = 0.4399  # front peak factor
+
+    # rear
+    br: float = 2.8919  # rear stiffness factor
+    cr: float = 2.4431  # rear shape factor
+    dr: float = 0.6236  # rear peak factor
+
+    # kinematic approximation
+    friction: float = 1  # friction parameter
+    acceleration: float = 2  # maximum acceleration
+
+    # motor parameters
+    cm1: float = 0.3697
+    cm2: float = 0.001295
+    cr1: float = 0.1629
+    cr2: float = 0.02133
+
+    def __init__(self, x0: np.ndarray, **kwargs) -> None:
+
+        x = cs.SX.sym("x", 6)
+        u = cs.SX.sym("u", 2)
+        y = cs.SX.sym("y", 4)
+        w = cs.SX.sym("w", 4)
+
+        C = np.eye(4, 6)
+
+        super().__init__(x, u, y, x0, C, w=w, **kwargs)
+
+        self.input_names = [r"$\Delta T$", r"$\Delta \delta$"]
+        self.output_names = [r"$x$", r"$y$", r"$\psi$", r"$v$"]
+        
+        self.input_constraint.lb[0] = -10
+        self.input_constraint.ub[0] = 10
+        self.input_constraint.lb[1] = -5
+        self.input_constraint.ub[1] = 5
+
+        self.state_constraint.lb[3] = 0
+        self.state_constraint.ub[3] = 2  # maximum drive
+        self.state_constraint.lb[-2] = -1
+        self.state_constraint.ub[-2] = 1  # maximum drive
+        self.state_constraint.lb[-1] = -0.384
+        self.state_constraint.ub[-1] = 0.384  # max steering angle (radians)
+
+    def _dynamics_num(self, x, u, w) -> cs.SX:
+        '''
+        x: [x, y, ψ, v, T, δ]
+        '''
+        lf, lr = self.axis_front, self.axis_rear
+        a, μ = self.acceleration, self.friction
+
+        β = cs.arctan2(lf*cs.tan(x[5]), lf + lr)
+
+        x_dot = x[3] * cs.cos(x[2] + β)
+        y_dot = x[3] * cs.sin(x[2] + β)
+        ψ_dot = x[3] * cs.sin(β) / lr
+        v_dot = a * x[4] - μ * x[3]
+        T_dot = u[0]
+        δ_dot = u[1]
+
+        return cs.vertcat(x_dot, y_dot, ψ_dot, v_dot, T_dot, δ_dot)
+    
+    def plot_phasespace(self,
+                        axis: plt.Axes,
+                        *,
+                        states: list,
+                        trim_exci: bool = False,
+                        **pltargs):
+        y = self.get_y()
+
+        super().plot_phasespace(axis=axis, states=states,
+                                trim_exci=trim_exci, 
+                                colormap=y[:, 3, 0],
+                                **pltargs)
+
+        l = 0.2
         w = 0.5 * l
 
         for i in range(0, self.n_steps, 20):
