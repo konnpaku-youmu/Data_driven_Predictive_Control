@@ -5,7 +5,7 @@ import numpy as np
 
 from SysBase import *
 from SysModels import ActiveSuspension
-from VehicleModel import SimpleBicycle, RacingCar
+from VehicleModel import KineBicycle, RacingCar, LinearKineBicycle
 from StateEstimator import KF
 
 from MPC import MPC, MPFC, MPCC
@@ -269,9 +269,9 @@ def test_simple_bicycle():
     ax3 = fig1.add_subplot(1, 2, 2)
     fig1.tight_layout()
 
-    vehicle = SimpleBicycle(x0=x, Ts=Ts)
-    u = np.vstack([0.0*np.ones(n_steps),
-                  [0.0 * np.sin(0.5*np.pi*np.linspace(0, Ts*n_steps, n_steps))]]).T
+    vehicle = KineBicycle(x0=x, Ts=Ts)
+    u = np.vstack([0.1*np.ones(n_steps),
+                  [0.1*np.sin(0.5*np.pi*np.linspace(0, Ts*n_steps, n_steps))]]).T
 
     test_policy = OpenLoop.given_input_seq(vehicle, u)
 
@@ -283,28 +283,29 @@ def test_simple_bicycle():
     plt.show()
 
 def simple_bicycle_mpc():
-    Ts, n_steps = 0.1, 200
-
-    x = np.array([[5.0], [0.95], [np.pi], [0], [0], [0]])
+    Ts, n_steps = 0.05, 500
 
     fig1 = plt.figure(figsize=(14, 6))
     ax1 = fig1.add_subplot(1, 2, 1)
     ax3 = fig1.add_subplot(1, 2, 2)
     fig1.tight_layout()
 
-    vehicle = SimpleBicycle(x0=x, Ts=Ts)
+    ref = Track("track.svg", density=680)
+    print(ref.traj.length())
+    x0, y0 = ref.traj.point(0).real, np.imag(ref.traj.point(0))
+
+    x = np.array([[x0], [y0], [np.pi/2], [2], [0], [0]])
+
+    vehicle = KineBicycle(x0=x, Ts=Ts)
 
     horizon = 20
-    Q = np.diag([50, 50, 0.0, 2.0])
+    Q = np.diag([50, 50])
     R = np.diag([0.02, 5])
 
     mpcc = MPFC(vehicle,
                 horizon=horizon,
                 Q=Q, R=R, Pf=2*Q)
     mpcc.build()
-
-    ref = Track("track.svg", density=180)
-    print(ref.traj.length())
 
     vehicle.simulate(n_steps=n_steps,
                      control_law=mpcc,
@@ -328,9 +329,7 @@ def racing_car():
     x0, y0 = ref.traj.point(0).real, np.imag(ref.traj.point(0))
     dxdy = ref.traj.derivative(0)
     ψ0 = np.arctan2(dxdy.imag, dxdy.real)
-
-    print(ref.traj.length())
-
+    
     x = np.array([[x0], [y0], [ψ0], [2.5], [0], [0], [0], [0]])
     vehicle = RacingCar(x0=x, Ts=Ts)
 
@@ -355,43 +354,44 @@ def racing_car():
 
     return
 
-def simple_bicycle_dpc():
+def linear_car_dpc():
     ax1, ax2 = setup_plot()
 
     Ts = 0.05
-    n_steps = 50
+    n_steps = 400
 
-    ref = Track("track.svg", density=580)
+    ref = Track("track.svg", density=500)
     x0, y0 = ref.traj.point(0).real, ref.traj.point(0).imag
     dxdy = ref.traj.derivative(0)
     ψ0 = np.arctan2(dxdy.imag, dxdy.real)
 
-    print(ref.traj.length())
+    x = np.array([[x0], [y0], [ψ0]])
+    vx = 0.6
+    vehicle = LinearKineBicycle(x0=x, v=vx, Ts=Ts)
 
-    x = np.array([[-5], [5], [0], [0], [0], [0]])
-    vehicle = SimpleBicycle(x0=x, Ts=Ts)
-
-    Q = np.diag([250, 250, 5, 0])
-    R = np.diag([0.005, 0.05])
-    horizon = 15
-    T_ini = 20
-    λ_s, λ_g = 2e2, 5e1
+    horizon = 20
+    Q_pc = np.diag([50, 50])
+    R = np.diag([1])
 
     excitation = OpenLoop.rnd_input(vehicle, n_steps)
-    dpc = DeePC(vehicle, T_ini=T_ini,
-                horizon=horizon,
+    dpc = DeePC(vehicle, T_ini=5, horizon=horizon,
+                data_mat=SMStruct.HANKEL,
                 init_law=excitation,
-                Q=Q, R=R, Pf=5*Q,
-                λ_s=λ_s, λ_g=λ_g)
+                Q=Q_pc, R=R)
+    
+    # vehicle.simulate(n_steps, 
+    #                  control_law=mpcc,
+    #                  reference=ref)
 
-    vehicle.plot_phasespace(axis=ax1, states=[0, 1])
-    vehicle.plot_control_input(axis=ax2)
-
-    plt.show()
-
+    # ref.plot_traj(axis=ax1)
+    # vehicle.plot_phasespace(axis=ax1, states=[0, 1])
+    # vehicle.plot_control_input(axis=ax2)
+    # plt.show()
+    
     return
 
 if __name__ == "__main__":
     # simple_bicycle_mpc()
-    racing_car()
-    # simple_bicycle_dpc()
+    # racing_car()
+    linear_car_dpc()
+    

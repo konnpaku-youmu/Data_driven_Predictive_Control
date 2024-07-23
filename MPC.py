@@ -206,14 +206,14 @@ class MPFC(MPC):
 
         for k in range(self.horizon):
             uk = self.opt_vars["u", k]
-            wk = np.zeros((self.model.m2, 1))
+            # wk = np.zeros((self.model.m2, 1))
 
             y = self.model._output(x, uk)
             err_t = y[:self.contour_dim] - self.opt_params['ref', k]
 
             cost += err_t.T@Q@err_t + uk.T@R@uk
 
-            x = self.model._f(x0=x, p=uk, w=wk)
+            x = self.model._f(x0=x, p=uk)
 
             lbu.append(lb_inputs)
             ubu.append(ub_inputs)

@@ -6,7 +6,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.patches import Rectangle
 import casadi as cs
 
-from SysBase import NonlinearSystem
+from SysBase import NonlinearSystem, LinearSystem
 
 
 @dataclass
@@ -62,7 +62,7 @@ class RacingCar(NonlinearSystem):
         self.state_constraint.lb[-1] = -0.384
         self.state_constraint.ub[-1] = 0.384  # max steering angle (radians)
 
-    def _dynamics_num(self, x, u, w) -> cs.SX:
+    def _dynamics_num(self, x, u) -> cs.SX:
         '''
         x: [x, y, ψ, v_x, v_y, ω, T, δ]
         '''
@@ -101,7 +101,7 @@ class RacingCar(NonlinearSystem):
         y = self.get_y()
 
         super().plot_phasespace(axis=axis, states=states,
-                                trim_exci=trim_exci, 
+                                trim_exci=trim_exci,
                                 colormap=y[:, 3, 0],
                                 **pltargs)
 
@@ -117,7 +117,7 @@ class RacingCar(NonlinearSystem):
         return
 
 
-class SimpleBicycle(NonlinearSystem):
+class KineBicycle(NonlinearSystem):
     length: float = 0.17  # length of the car (meters)
     axis_front: float = 0.047  # distance cog and front axis (meters)
     axis_rear: float = 0.05  # distance cog and rear axis (meters)
@@ -165,7 +165,7 @@ class SimpleBicycle(NonlinearSystem):
 
         self.input_names = [r"$\Delta T$", r"$\Delta \delta$"]
         self.output_names = [r"$x$", r"$y$", r"$\psi$", r"$v$"]
-        
+
         self.input_constraint.lb[0] = -10
         self.input_constraint.ub[0] = 10
         self.input_constraint.lb[1] = -5
@@ -178,7 +178,7 @@ class SimpleBicycle(NonlinearSystem):
         self.state_constraint.lb[-1] = -0.384
         self.state_constraint.ub[-1] = 0.384  # max steering angle (radians)
 
-    def _dynamics_num(self, x, u, w) -> cs.SX:
+    def _dynamics_num(self, x, u) -> cs.SX:
         '''
         x: [x, y, ψ, v, T, δ]
         '''
@@ -195,7 +195,7 @@ class SimpleBicycle(NonlinearSystem):
         δ_dot = u[1]
 
         return cs.vertcat(x_dot, y_dot, ψ_dot, v_dot, T_dot, δ_dot)
-    
+
     def plot_phasespace(self,
                         axis: plt.Axes,
                         *,
@@ -205,7 +205,7 @@ class SimpleBicycle(NonlinearSystem):
         y = self.get_y()
 
         super().plot_phasespace(axis=axis, states=states,
-                                trim_exci=trim_exci, 
+                                trim_exci=trim_exci,
                                 colormap=y[:, 3, 0],
                                 **pltargs)
 
@@ -219,3 +219,42 @@ class SimpleBicycle(NonlinearSystem):
             axis.add_patch(vehicle)
 
         return
+
+
+class LinearKineBicycle(LinearSystem):
+    def __init__(self, x0: np.ndarray, v: float, **kwargs):
+        """
+        x: [x, y, φ]
+        """
+
+        self.params = VehicleParams()
+
+        m, lf, lr, I_zz = self.params.m, self.params.lf, self.params.lr, self.params.I_zz
+        Cf, Cr = self.params.Cf, self.params.Cr
+
+        self.Ts = 0.05
+
+        b22 = self.Ts*v / lr
+
+        A = np.array([[1,   0,   0],
+                      [0,   1, self.Ts*v],
+                      [0,   0,   1]])
+
+        B = np.array([[0],
+                      [self.Ts*v],
+                      [b22]])
+
+        C = np.eye(2, 3)
+
+        D = np.zeros([2, 1])
+
+        K = np.array([[self.Ts*v],
+                      [0],
+                      [0]])
+
+        super().__init__(A, B, C, D, x0,
+                         discrete=True, K=K,
+                         **kwargs)
+
+        self.input_constraint.lb[0] = -0.5
+        self.input_constraint.ub[0] = 0.5

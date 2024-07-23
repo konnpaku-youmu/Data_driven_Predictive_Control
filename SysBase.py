@@ -72,12 +72,15 @@ class System:
         kwargs.setdefault("noisy", False)
         kwargs.setdefault("σ_x", np.zeros([self.n, self.n]))
         kwargs.setdefault("σ_y", np.zeros([self.p, self.p]))
+        kwargs.setdefault("σ_u", np.zeros([self.m, self.m]))
 
         self.noisy = kwargs["noisy"]
         self.w = kwargs["σ_x"] if self.noisy else np.zeros(
             [self.n, self.n])
         self.v = kwargs["σ_y"] if self.noisy else np.zeros(
             [self.p, self.p])
+        self.σu = kwargs["σ_u"] if self.noisy else np.zeros(
+            [self.m, self.m])
 
     def __update_u(self, uk: np.ndarray | cs.DM) -> None:
         # compatibility with casadi::MX
@@ -119,7 +122,7 @@ class System:
         
     def _control_noise(self)-> np.ndarray:
         mean = np.zeros(self.m)
-        σ = np.diag([0.1, 0.1])
+        σ = np.diag([0.001])
         return np.random.multivariate_normal(mean, σ, size=[1]).T
 
     def _process_noise(self) -> np.ndarray:
@@ -175,14 +178,11 @@ class System:
                 return np.zeros([self.p, 1])
             reference = zero_ref
 
-        if disturbance is None:
-            disturbance = np.zeros([n_steps, self.m2, 1])
-
         for k in track(range(n_steps), description="Simulation ...", total=n_steps):
             x_hat = observer(self.__y[-1])
             uk, u_pred = control_law(x_hat, reference())
-            uk += self._control_noise()
-            x_next = self._f(x0=self.__x[-1], p=uk, w=disturbance[k]) + self._process_noise()
+            # uk += self._control_noise()
+            x_next = self._f(x0=self.__x[-1], p=uk) + self._process_noise()
             yk = self._output(x_next, uk) + self._measurement_noise()
 
             # Time update
@@ -362,8 +362,8 @@ class NonlinearSystem(System):
         # Abstract method to be overrided
         raise NotImplementedError()
 
-    def _f(self, x0, p, w) -> np.ndarray:
-        x_next = self.__F(x0=x0, p=p, w=w)
+    def _f(self, x0, p) -> np.ndarray:
+        x_next = self.__F(x0=x0, p=p)
         # x_next = x_next["xf"]
         # return x_next.full()
         return x_next
@@ -373,22 +373,29 @@ class NonlinearSystem(System):
 
 
 class LinearSystem(System):
-    def __init__(self, A: np.ndarray, B1: np.ndarray, B2: np.ndarray,
+    def __init__(self, A: np.ndarray, B: np.ndarray,
                  C: np.ndarray, D: np.ndarray,
-                 x0: np.ndarray, **kwargs) -> None:
+                 x0: np.ndarray,
+                 *, 
+                 discrete = False,
+                 K: np.ndarray, 
+                 **kwargs) -> None:
 
         super().__init__(**kwargs)
 
-        B_aug = np.concatenate([B1, B2], axis=1)
-
-        self.A, B_aug = zoh(A, B_aug, self.Ts)
-        self.B = np.reshape(B_aug[:, 0], (-1, 1))
-        self.B2 = np.reshape(B_aug[:, 1], (-1, 1))
+        if discrete:
+            self.A, self.B = A, B
+            print("Discrete")
+        else:
+            # discretize the system equation
+            self.A, self.B = zoh(A, B, self.Ts)
+        
         self.C, self.D = C, D
 
+        self.K = K
+
         self.n = A.shape[1]
-        self.m = B1.shape[1]
-        self.m2 = B2.shape[1]
+        self.m = B.shape[1]
         self.p = C.shape[0]
 
         self._f = self._dynamics
@@ -401,13 +408,12 @@ class LinearSystem(System):
         info = "Linear system"
         return info
 
-    def _dynamics(self, x0: np.ndarray, p: np.ndarray, w: np.ndarray = None) -> np.ndarray:
+    def _dynamics(self, x0: np.ndarray, p: np.ndarray) -> np.ndarray:
 
         assert x0.shape == (self.n, 1), "Current state vector ∈ {}".format(x0.shape)  # sanity check
         assert p.shape == (self.m, 1), "Control vector ∈ {}".format(p.shape)  # sanity check
-        assert w.shape == (self.m2, 1), "Disturbance vector ∈ {}".format(w.shape)  # sanity check
 
-        x_next = self.A@x0 + self.B@p + self.B2@w
+        x_next = self.A@x0 + self.B@p + self.K
 
         assert x_next.shape == (self.n, 1), "New state vector ∈ {}".format(x_next.shape)  # sanity check
 

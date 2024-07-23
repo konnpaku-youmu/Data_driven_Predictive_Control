@@ -55,11 +55,11 @@ def zoh(A: np.ndarray, B: np.ndarray, Ts: float) -> Tuple[np.ndarray]:
 
 
 def rk4(f: cs.Function, Ts: float) -> Callable:
-    def rk4_dyn(x0, p, w):
-        s_1 = f(x0, p, w)
-        s_2 = f(x0 + (Ts / 2) * s_1, p, w)
-        s_3 = f(x0 + (Ts / 2) * s_2, p, w)
-        s_4 = f(x0 + Ts * s_3, p, w)
+    def rk4_dyn(x0, p):
+        s_1 = f(x0, p)
+        s_2 = f(x0 + (Ts / 2) * s_1, p)
+        s_3 = f(x0 + (Ts / 2) * s_2, p)
+        s_4 = f(x0 + Ts * s_3, p)
         x_next = x0 + (Ts / 6) * (s_1 + 2*s_2 + 2*s_3 + s_4)
         return x_next
 
@@ -225,10 +225,11 @@ class Track(object):
 
 
 if __name__ == "__main__":
-    z = SX.sym('z', 2)
-    x = SX.sym('x', 2)
-    g0 = sin(x+z)
-    g1 = cos(x-z)
-    g = Function('g', [z, x], [g0, g1])
-    G = rootfinder('G', 'newton', g)
-    print(np.array(G(1, 1)))
+    Ts = 0.05
+    n_steps = 100
+
+    u = np.array([0.1 * np.sin(0.5*np.pi*np.linspace(0, Ts*n_steps, n_steps))]).T
+    β = np.arctan2(np.tan(u), 2)
+    
+    plt.plot(β)
+    plt.show()
