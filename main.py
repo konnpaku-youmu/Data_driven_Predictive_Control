@@ -365,7 +365,7 @@ def linear_car_dpc():
     dxdy = ref.traj.derivative(0)
     ψ0 = np.arctan2(dxdy.imag, dxdy.real)
 
-    x = np.array([[x0], [y0], [ψ0]])
+    x = np.array([[x0], [y0], [0]])
     vx = 0.6
     vehicle = LinearKineBicycle(x0=x, v=vx, Ts=Ts)
 
@@ -379,14 +379,18 @@ def linear_car_dpc():
                 init_law=excitation,
                 Q=Q_pc, R=R)
     
-    # vehicle.simulate(n_steps, 
-    #                  control_law=mpcc,
-    #                  reference=ref)
+    # dpc.plot_data_mat_svd()
+    
+    vehicle.rst(x)
 
-    # ref.plot_traj(axis=ax1)
-    # vehicle.plot_phasespace(axis=ax1, states=[0, 1])
-    # vehicle.plot_control_input(axis=ax2)
-    # plt.show()
+    vehicle.simulate(n_steps, 
+                     control_law=dpc,
+                     reference=ref)
+
+    ref.plot_traj(axis=ax1)
+    vehicle.plot_phasespace(axis=ax1, states=[0, 1])
+    vehicle.plot_control_input(axis=ax2)
+    plt.show()
     
     return
 

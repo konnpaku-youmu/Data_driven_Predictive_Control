@@ -115,7 +115,7 @@ class DeePC(Controller):
 
         self.opt_params = struct_symMX([entry('u_ini', shape=(self.model.m), repeat=self.T_ini),
                                         entry('y_ini', shape=(self.model.p), repeat=self.T_ini),
-                                        entry('ref', shape=(self.model.p))])
+                                        entry('ref', shape=(self.model.p), repeat=self.horizon)])
 
         self.opt_vars = struct_symMX([entry("u", shape=(self.model.m), repeat=self.horizon),
                                       entry("y", shape=(self.model.p), repeat=self.horizon),
@@ -165,16 +165,22 @@ class DeePC(Controller):
         for k in range(self.horizon - 1):
             y_k = self.opt_vars["y", k]
             u_k = self.opt_vars["u", k]
+            r_k = self.opt_params["ref", k]
+
+            y_k -= r_k
 
             loss += sum1(y_k.T @ Q @ y_k) + sum1(u_k.T @ R @ u_k)
 
         y_N = self.opt_vars["y", -1]
         u_N = self.opt_vars["u", -1]
+        r_N = self.opt_params["ref", -1]
+
+        y_N -= r_N
         loss += sum1(y_N.T @ (10*Q) @ y_N) + sum1(u_N.T @ (R) @ u_N)
 
         if self.model.noisy or not isinstance(self.model, LinearSystem):
             # regularization terms
-            print("Add regularization")
+            print("Adding regularization ... ")
             g = self.opt_vars["g"]
             Y_p = self.Y_p
             y_ini = vertcat(*self.opt_params['y_ini'])

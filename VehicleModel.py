@@ -224,7 +224,7 @@ class KineBicycle(NonlinearSystem):
 class LinearKineBicycle(LinearSystem):
     def __init__(self, x0: np.ndarray, v: float, **kwargs):
         """
-        x: [x, y, φ]
+        x: [x, y, ψ]
         """
 
         self.params = VehicleParams()
@@ -256,5 +256,5 @@ class LinearKineBicycle(LinearSystem):
                          discrete=True, K=K,
                          **kwargs)
 
-        self.input_constraint.lb[0] = -0.5
-        self.input_constraint.ub[0] = 0.5
+        self.input_constraint.lb[0] = -0.1
+        self.input_constraint.ub[0] = 0.1
