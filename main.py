@@ -5,7 +5,7 @@ import numpy as np
 
 from SysBase import *
 from SysModels import ActiveSuspension
-from VehicleModel import KineBicycle, RacingCar, LinearKineBicycle
+from VehicleModel import KineBicycle, RacingCar, LinearKineBicycle, LTVKineBicycle
 from StateEstimator import KF
 
 from MPC import MPC, MPFC, MPCC
@@ -73,7 +73,6 @@ def test_passive():
 
     plt.tight_layout()
     plt.show()
-
 
 def test_lqr():
     dist, v, Ts = 50, 5, 0.05
@@ -148,7 +147,6 @@ def test_lqr():
 
     plt.tight_layout()
     plt.show()
-
 
 def test_susp():
     dist, v, Ts = 50, 5, 0.05
@@ -237,7 +235,6 @@ def test_susp():
 
     plt.show()
 
-
 def sim_parellel(n_steps, x, Ts, d_profile, λ_s, λ_g, params):
 
     T_ini, init_l = params[0], params[1]
@@ -258,31 +255,28 @@ def sim_parellel(n_steps, x, Ts, d_profile, λ_s, λ_g, params):
 
     return params, loss
 
+def test_kine_bicycle():
+    ax1, ax2 = setup_plot()
 
-def test_simple_bicycle():
     Ts = 0.05
     n_steps = 100
     x = np.array([[0], [0], [0], [0], [0], [0]])
 
-    fig1 = plt.figure(figsize=(14, 6))
-    ax1 = fig1.add_subplot(1, 2, 1)
-    ax3 = fig1.add_subplot(1, 2, 2)
-    fig1.tight_layout()
-
     vehicle = KineBicycle(x0=x, Ts=Ts)
-    u = np.vstack([0.1*np.ones(n_steps),
+    u = np.vstack([0.05*np.ones(n_steps),
                   [0.1*np.sin(0.5*np.pi*np.linspace(0, Ts*n_steps, n_steps))]]).T
 
     test_policy = OpenLoop.given_input_seq(vehicle, u)
 
     vehicle.simulate(n_steps=n_steps,
                      control_law=test_policy)
+    # vehicle.plot_trajectory(axis=ax1, states=[1])
     vehicle.plot_phasespace(axis=ax1, states=[0, 1])
-    vehicle.plot_control_input(axis=ax3)
+    vehicle.plot_control_input(axis=ax2)
 
     plt.show()
 
-def simple_bicycle_mpc():
+def kine_bicycle_mpc():
     Ts, n_steps = 0.05, 500
 
     fig1 = plt.figure(figsize=(14, 6))
@@ -323,14 +317,14 @@ def racing_car():
     ax1, ax2 = setup_plot()
 
     Ts = 0.05
-    n_steps = 500
+    n_steps = 100
 
-    ref = Track("track.svg", density=500)
+    ref = Track("track.svg", density=150)
     x0, y0 = ref.traj.point(0).real, np.imag(ref.traj.point(0))
     dxdy = ref.traj.derivative(0)
     ψ0 = np.arctan2(dxdy.imag, dxdy.real)
     
-    x = np.array([[x0], [y0], [ψ0], [2.5], [0], [0], [0], [0]])
+    x = np.array([[x0], [y0], [ψ0], [0], [0], [0], [0], [0]])
     vehicle = RacingCar(x0=x, Ts=Ts)
 
     horizon = 20
@@ -358,15 +352,15 @@ def linear_car_dpc():
     ax1, ax2 = setup_plot()
 
     Ts = 0.05
-    n_steps = 400
+    n_steps = 100
 
-    ref = Track("track.svg", density=500)
+    ref = Track("track.svg", density=150)
     x0, y0 = ref.traj.point(0).real, ref.traj.point(0).imag
     dxdy = ref.traj.derivative(0)
     ψ0 = np.arctan2(dxdy.imag, dxdy.real)
 
-    x = np.array([[x0], [y0], [0]])
-    vx = 0.6
+    x = np.array([[x0], [y0], [ψ0]])
+    vx = 1
     vehicle = LinearKineBicycle(x0=x, v=vx, Ts=Ts)
 
     horizon = 20
@@ -374,7 +368,7 @@ def linear_car_dpc():
     R = np.diag([1])
 
     excitation = OpenLoop.rnd_input(vehicle, n_steps)
-    dpc = DeePC(vehicle, T_ini=5, horizon=horizon,
+    dpc = DeePC(vehicle, T_ini=4, horizon=horizon,
                 data_mat=SMStruct.HANKEL,
                 init_law=excitation,
                 Q=Q_pc, R=R)
@@ -394,8 +388,35 @@ def linear_car_dpc():
     
     return
 
+def ltv_car_test():
+    ax1, ax2 = setup_plot()
+
+    Ts = 0.05
+    n_steps = 100
+
+    x = np.array([[0], [0], [0], [0], [0], [0]])
+    vehicle = LTVKineBicycle(x0=x, Ts=Ts)
+
+    δ = 0.1*np.sin(0.5*np.pi*np.linspace(0, Ts*n_steps, n_steps))
+    Δβ = np.arctan2(np.tan(δ), 2)
+    
+    u = np.vstack([0.05*np.ones(n_steps),
+                  Δβ]).T
+
+    test_policy = OpenLoop.given_input_seq(vehicle, u)
+
+    vehicle.simulate(n_steps, 
+                     control_law=test_policy)
+
+    # vehicle.plot_trajectory(axis=ax1, states=[1])
+    vehicle.plot_phasespace(axis=ax1, states=[0, 1])
+    vehicle.plot_control_input(axis=ax2)
+    plt.show()
+    
+    return
+    
+
 if __name__ == "__main__":
-    # simple_bicycle_mpc()
-    # racing_car()
-    linear_car_dpc()
+    test_kine_bicycle()
+    ltv_car_test()
     

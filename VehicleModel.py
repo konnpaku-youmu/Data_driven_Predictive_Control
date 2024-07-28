@@ -9,29 +9,64 @@ import casadi as cs
 from SysBase import NonlinearSystem, LinearSystem
 
 
+# @dataclass
+# class VehicleParams():
+#     m = 0.041
+#     I_zz = 27.8e-6
+
+#     lf = 0.029
+#     lr = 0.033
+
+#     Cm1 = 0.287
+#     Cm2 = 0.0545
+#     Cr0 = 0.0518
+#     Cr2 = 0.00035
+
+#     Bf = 2.579
+#     Cf = 1.2
+#     Df = 0.192
+
+#     Br = 3.3852
+#     Cr = 1.2691
+#     Dr = 0.1737
+
+#     E = 0.58
+
 @dataclass
 class VehicleParams():
-    m = 0.041
-    I_zz = 27.8e-6
+    length: float = 0.17  # length of the car (meters)
+    axis_front: float = 0.047  # distance cog and front axis (meters)
+    axis_rear: float = 0.05  # distance cog and rear axis (meters)
+    front: float = 0.08  # distance cog and front (meters)
+    rear: float = 0.08  # distance cog and rear (meters)
+    width: float = 0.08  # width of the car (meters)
+    height: float = 0.055  # height of the car (meters)
+    mass: float = 0.1735  # mass of the car (kg)
+    inertia: float = 18.3e-5  # moment of inertia around vertical (kg*m^2)
 
-    lf = 0.029
-    lr = 0.033
+    """Pacejka 'Magic Formula' parameters.
+        Used for magic formula: `peak * sin(shape * arctan(stiffness * alpha))`
+        as in Pacejka (2005) 'Tyre and Vehicle Dynamics', p. 161, Eq. (4.6)
+        """
+    # front
+    bf: float = 3.1355  # front stiffness factor
+    cf: float = 2.1767  # front shape factor
+    df: float = 0.4399  # front peak factor
 
-    Cm1 = 0.287
-    Cm2 = 0.0545
-    Cr0 = 0.0518
-    Cr2 = 0.00035
+    # rear
+    br: float = 2.8919  # rear stiffness factor
+    cr: float = 2.4431  # rear shape factor
+    dr: float = 0.6236  # rear peak factor
 
-    Bf = 2.579
-    Cf = 1.2
-    Df = 0.192
+    # kinematic approximation
+    friction: float = 1  # friction parameter
+    acceleration: float = 2  # maximum acceleration
 
-    Br = 3.3852
-    Cr = 1.2691
-    Dr = 0.1737
-
-    E = 0.58
-
+    # motor parameters
+    cm1: float = 0.3697
+    cm2: float = 0.001295
+    cr1: float = 0.1629
+    cr2: float = 0.02133
 
 class RacingCar(NonlinearSystem):
     def __init__(self, x0: np.ndarray, **kwargs) -> None:
@@ -118,53 +153,21 @@ class RacingCar(NonlinearSystem):
 
 
 class KineBicycle(NonlinearSystem):
-    length: float = 0.17  # length of the car (meters)
-    axis_front: float = 0.047  # distance cog and front axis (meters)
-    axis_rear: float = 0.05  # distance cog and rear axis (meters)
-    front: float = 0.08  # distance cog and front (meters)
-    rear: float = 0.08  # distance cog and rear (meters)
-    width: float = 0.08  # width of the car (meters)
-    height: float = 0.055  # height of the car (meters)
-    mass: float = 0.1735  # mass of the car (kg)
-    inertia: float = 18.3e-5  # moment of inertia around vertical (kg*m^2)
-
-    """Pacejka 'Magic Formula' parameters.
-        Used for magic formula: `peak * sin(shape * arctan(stiffness * alpha))`
-        as in Pacejka (2005) 'Tyre and Vehicle Dynamics', p. 161, Eq. (4.6)
-        """
-    # front
-    bf: float = 3.1355  # front stiffness factor
-    cf: float = 2.1767  # front shape factor
-    df: float = 0.4399  # front peak factor
-
-    # rear
-    br: float = 2.8919  # rear stiffness factor
-    cr: float = 2.4431  # rear shape factor
-    dr: float = 0.6236  # rear peak factor
-
-    # kinematic approximation
-    friction: float = 1  # friction parameter
-    acceleration: float = 2  # maximum acceleration
-
-    # motor parameters
-    cm1: float = 0.3697
-    cm2: float = 0.001295
-    cr1: float = 0.1629
-    cr2: float = 0.02133
-
     def __init__(self, x0: np.ndarray, **kwargs) -> None:
+
+        self.params = VehicleParams()
 
         x = cs.SX.sym("x", 6)
         u = cs.SX.sym("u", 2)
-        y = cs.SX.sym("y", 4)
+        y = cs.SX.sym("y", 6)
         w = cs.SX.sym("w", 4)
 
-        C = np.eye(4, 6)
+        C = np.eye(6, 6)
 
         super().__init__(x, u, y, x0, C, w=w, **kwargs)
 
         self.input_names = [r"$\Delta T$", r"$\Delta \delta$"]
-        self.output_names = [r"$x$", r"$y$", r"$\psi$", r"$v$"]
+        self.output_names = [r"$x$", r"$y$", r"$\psi$", r"$v$", r"$T$", r"$\delta$"]
 
         self.input_constraint.lb[0] = -10
         self.input_constraint.ub[0] = 10
@@ -182,8 +185,8 @@ class KineBicycle(NonlinearSystem):
         '''
         x: [x, y, ψ, v, T, δ]
         '''
-        lf, lr = self.axis_front, self.axis_rear
-        a, μ = self.acceleration, self.friction
+        lf, lr = self.params.axis_front, self.params.axis_rear
+        a, μ = self.params.acceleration, self.params.friction
 
         β = cs.arctan2(lf*cs.tan(x[5]), lf + lr)
 
@@ -209,7 +212,7 @@ class KineBicycle(NonlinearSystem):
                                 colormap=y[:, 3, 0],
                                 **pltargs)
 
-        l = 0.2
+        l = 0.17
         w = 0.5 * l
 
         for i in range(0, self.n_steps, 20):
@@ -234,21 +237,22 @@ class LinearKineBicycle(LinearSystem):
 
         self.Ts = 0.05
 
-        b22 = self.Ts*v / lr
+        a23 = b21 = k11 = self.Ts*v
+        b31 = self.Ts*v / lr
 
         A = np.array([[1,   0,   0],
-                      [0,   1, self.Ts*v],
+                      [0,   1, a23],
                       [0,   0,   1]])
 
         B = np.array([[0],
-                      [self.Ts*v],
-                      [b22]])
+                      [b21],
+                      [b31]])
 
         C = np.eye(2, 3)
 
         D = np.zeros([2, 1])
 
-        K = np.array([[self.Ts*v],
+        K = np.array([[k11],
                       [0],
                       [0]])
 
@@ -258,3 +262,113 @@ class LinearKineBicycle(LinearSystem):
 
         self.input_constraint.lb[0] = -0.1
         self.input_constraint.ub[0] = 0.1
+
+
+class LTVKineBicycle(LinearSystem):
+    def __init__(self, x0: np.ndarray, **kwargs):
+        '''
+        x: [x, y, ψ, v, T, β]
+        '''
+        self.params = VehicleParams()
+
+        lr= self.params.axis_rear
+        a, μ = self.params.acceleration, self.params.friction
+
+        self.Ts = 0.05
+        ψ0 = x0[2, 0]
+        v0 = x0[3, 0]
+        β0 = x0[5, 0]
+
+        a33 = 1 - μ*self.Ts
+        a34 = a*self.Ts
+
+        b01 = -v0*self.Ts*np.sin(ψ0)
+        b11 = v0*self.Ts*np.cos(ψ0)
+        b21 = (v0/lr) * np.cos(β0) * self.Ts
+
+        k00 = v0*self.Ts*np.cos(ψ0)
+        k10 = v0*self.Ts*np.sin(ψ0)
+        k20 = (v0/lr) * np.sin(β0) * self.Ts
+
+        A = np.array([[1, 0, 0,   0,   0,  0],
+                      [0, 1, 0,   0,   0,  0],
+                      [0, 0, 1,   0,   0,  0],
+                      [0, 0, 0, a33, a34,  0],
+                      [0, 0, 0,   0,   1,  0],
+                      [0, 0, 0,   0,   0,  1]])
+
+        ###               ΔT       Δβ
+        B = np.array([[0,           b01],
+                      [0,           b11],
+                      [0,           b21],
+                      [0,             0],
+                      [self.Ts,       0],
+                      [0,       self.Ts]])
+
+        C = np.eye(6, 6)
+
+        D = np.zeros([6, 2])
+        
+        K = np.array([[k00],
+                      [k10],
+                      [k20],
+                      [0],
+                      [0],
+                      [0]])
+
+        super().__init__(A, B, C, D, x0,
+                         discrete=True, K=K,
+                         **kwargs)
+        
+        self.input_names = [r"$\Delta T$", r"$\Delta \delta$"]
+        self.output_names = [r"$x$", r"$y$", r"$\psi$", r"$v$", r"$T$", r"$\delta$"]
+
+    def _dynamics(self, x0: np.ndarray, p: np.ndarray) -> np.ndarray:
+
+        assert x0.shape == (self.n, 1), "Current state vector ∈ {}".format(x0.shape)  # sanity check
+        assert p.shape == (self.m, 1), "Control vector ∈ {}".format(p.shape)  # sanity check
+
+        lr= self.params.axis_rear
+
+        # update system matrices: https://arxiv.org/pdf/1805.08551
+        ψ0 = x0[2, 0]
+        v0 = x0[3, 0]
+        β0 = x0[5, 0]
+
+        self.B[0, 1] = -v0*self.Ts*np.sin(ψ0 + β0)
+        self.B[1, 1] = v0*self.Ts*np.cos(ψ0 + β0)
+        self.B[2, 1] = (v0 / lr) * np.cos(β0) * self.Ts
+
+        self.K[0, 0] = v0*self.Ts*np.cos(ψ0 + β0)
+        self.K[1, 0] = v0*self.Ts*np.sin(ψ0 + β0)
+        self.K[2, 0] = (v0 / lr) * np.sin(β0) * self.Ts
+
+        x_next = self.A@x0 + self.B@p + self.K
+
+        assert x_next.shape == (self.n, 1), "New state vector ∈ {}".format(x_next.shape)  # sanity check
+
+        return x_next
+
+    def plot_phasespace(self,
+                        axis: plt.Axes,
+                        *,
+                        states: list,
+                        trim_exci: bool = False,
+                        **pltargs):
+        y = self.get_y()
+
+        super().plot_phasespace(axis=axis, states=states,
+                                trim_exci=trim_exci,
+                                colormap=y[:, 3, 0],
+                                **pltargs)
+
+        l = 0.17
+        w = 0.5 * l
+
+        for i in range(0, self.n_steps, 20):
+            vehicle = Rectangle(y[i, :2, :] - np.array([[l/2], [w/2]]), l, w,
+                                angle=180*y[i, 2, :]/np.pi,
+                                rotation_point='center')
+            axis.add_patch(vehicle)
+
+        return

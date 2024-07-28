@@ -9,10 +9,7 @@ from helper import forward_euler, zoh, rk4, Bound
 
 
 class System:
-    def __init__(self, **kwargs) -> None:
-
-        # set default values of keyword arguments
-        kwargs.setdefault("Ts", 0.05)
+    def __init__(self, Ts: float, **kwargs) -> None:
 
         # System variables
         self.__x: np.ndarray = None
@@ -20,7 +17,7 @@ class System:
         self.__u: np.ndarray = None
         self.__pred_x: np.ndarray = None
         self.__pred_y: np.ndarray = None
-        self.Ts = kwargs["Ts"]
+        self.Ts = Ts
 
         # Integer invariants
         self.n: int = None  # states
@@ -69,16 +66,14 @@ class System:
         self.__y[0] = self._output(self.__x[0], self.__u[0])
 
     def _set_noise(self, **kwargs) -> None:
-        kwargs.setdefault("noisy", False)
-        kwargs.setdefault("σ_x", np.zeros([self.n, self.n]))
-        kwargs.setdefault("σ_y", np.zeros([self.p, self.p]))
-        kwargs.setdefault("σ_u", np.zeros([self.m, self.m]))
-
-        self.noisy = kwargs["noisy"]
         self.w = kwargs["σ_x"] if self.noisy else np.zeros(
             [self.n, self.n])
         self.v = kwargs["σ_y"] if self.noisy else np.zeros(
             [self.p, self.p])
+
+    def _disturb_input(self, **kwargs) -> None:
+        kwargs.setdefault("σ_u", np.zeros([self.m, self.m]))
+        
         self.σu = kwargs["σ_u"] if self.noisy else np.zeros(
             [self.m, self.m])
 
@@ -119,10 +114,10 @@ class System:
             y_pred_k) is np.ndarray else y_pred_k.full()
         self.__pred_y = np.concatenate(
             [self.__pred_y, np.atleast_3d(y_pred_next.squeeze())], axis=0)
-        
-    def _control_noise(self)-> np.ndarray:
+
+    def _control_noise(self) -> np.ndarray:
         mean = np.zeros(self.m)
-        σ = np.diag([0.001])
+        σ = np.diag([0.01])
         return np.random.multivariate_normal(mean, σ, size=[1]).T
 
     def _process_noise(self) -> np.ndarray:
@@ -291,7 +286,7 @@ class System:
             cm = t
         else:
             cm = colormap
-        
+
         norm = plt.Normalize(np.min(cm), np.max(cm))
 
         lc = LineCollection(segments, cmap='coolwarm', norm=norm)
@@ -303,7 +298,7 @@ class System:
         axis.margins(0.1, 0.1)
 
         plt.colorbar(line, ax=axis, location="bottom",
-                     shrink = 1.0, label=r"$v_x$")
+                     shrink=1.0, label=r"$v_x$")
 
         return y, t
 
@@ -337,7 +332,10 @@ class System:
 
 class NonlinearSystem(System):
     def __init__(self, states: cs.MX, inputs: cs.MX, outputs: cs.MX,
-                 x0: np.ndarray, C: np.ndarray = None, *, w: cs.MX = None, **kwargs) -> None:
+                 x0: np.ndarray, C: np.ndarray = None, 
+                 *, 
+                 isNoisy: bool = False,
+                 w: cs.MX = None, **kwargs) -> None:
         super().__init__(**kwargs)
 
         self.n = states.shape[0]
@@ -350,9 +348,11 @@ class NonlinearSystem(System):
         # self.__F = self.__discrete_dynamics()
         self.__F = rk4(self._dynamics_num, self.Ts)
 
-        self._set_noise(**kwargs)
         self._set_initial_states(x0=x0)
         self._init_constraints()
+
+        self.noisy = isNoisy
+        self._set_noise(**kwargs)
 
     def __repr__(self) -> str:
         info = "Nonlinear system"
@@ -373,12 +373,14 @@ class NonlinearSystem(System):
 
 
 class LinearSystem(System):
-    def __init__(self, A: np.ndarray, B: np.ndarray,
+    def __init__(self, 
+                 A: np.ndarray, B: np.ndarray,
                  C: np.ndarray, D: np.ndarray,
-                 x0: np.ndarray,
-                 *, 
-                 discrete = False,
-                 K: np.ndarray, 
+                 x0: np.ndarray, 
+                 *,
+                 discrete: bool = False,
+                 isNoisy: bool = False,
+                 K: np.ndarray,
                  **kwargs) -> None:
 
         super().__init__(**kwargs)
@@ -389,7 +391,7 @@ class LinearSystem(System):
         else:
             # discretize the system equation
             self.A, self.B = zoh(A, B, self.Ts)
-        
+
         self.C, self.D = C, D
 
         self.K = K
@@ -400,9 +402,11 @@ class LinearSystem(System):
 
         self._f = self._dynamics
 
-        self._set_noise(**kwargs)
         self._set_initial_states(x0=x0)
         self._init_constraints()
+        
+        self.noisy = isNoisy
+        self._set_noise(**kwargs)
 
     def __repr__(self) -> str:
         info = "Linear system"
