@@ -169,8 +169,8 @@ class KineBicycle(NonlinearSystem):
         self.input_names = [r"$\Delta T$", r"$\Delta \delta$"]
         self.output_names = [r"$x$", r"$y$", r"$\psi$", r"$v$", r"$T$", r"$\delta$"]
 
-        self.input_constraint.lb[0] = -10
-        self.input_constraint.ub[0] = 10
+        self.input_constraint.lb[0] = -5
+        self.input_constraint.ub[0] = 5
         self.input_constraint.lb[1] = -5
         self.input_constraint.ub[1] = 5
 
@@ -232,8 +232,7 @@ class LinearKineBicycle(LinearSystem):
 
         self.params = VehicleParams()
 
-        m, lf, lr, I_zz = self.params.m, self.params.lf, self.params.lr, self.params.I_zz
-        Cf, Cr = self.params.Cf, self.params.Cr
+        lr = self.params.axis_rear
 
         self.Ts = 0.05
 
@@ -270,6 +269,7 @@ class LTVKineBicycle(LinearSystem):
         x: [x, y, ψ, v, T, β]
         '''
         self.params = VehicleParams()
+        self.nsteps = 0
 
         lr= self.params.axis_rear
         a, μ = self.params.acceleration, self.params.friction
@@ -282,8 +282,8 @@ class LTVKineBicycle(LinearSystem):
         a33 = 1 - μ*self.Ts
         a34 = a*self.Ts
 
-        b01 = -v0*self.Ts*np.sin(ψ0)
-        b11 = v0*self.Ts*np.cos(ψ0)
+        b01 = v0*self.Ts*np.cos(ψ0)
+        b11 = v0*self.Ts*np.sin(ψ0)
         b21 = (v0/lr) * np.cos(β0) * self.Ts
 
         k00 = v0*self.Ts*np.cos(ψ0)
@@ -305,9 +305,9 @@ class LTVKineBicycle(LinearSystem):
                       [self.Ts,       0],
                       [0,       self.Ts]])
 
-        C = np.eye(6, 6)
+        C = np.eye(2, 6)
 
-        D = np.zeros([6, 2])
+        D = np.zeros([2, 2])
         
         K = np.array([[k00],
                       [k10],
@@ -323,27 +323,42 @@ class LTVKineBicycle(LinearSystem):
         self.input_names = [r"$\Delta T$", r"$\Delta \delta$"]
         self.output_names = [r"$x$", r"$y$", r"$\psi$", r"$v$", r"$T$", r"$\delta$"]
 
+        self.input_constraint.lb[0] = -5
+        self.input_constraint.ub[0] = 5
+        self.input_constraint.lb[1] = -5
+        self.input_constraint.ub[1] = 5
+
+        self.state_constraint.lb[3] = 0
+        self.state_constraint.ub[3] = 2  # maximum drive
+        self.state_constraint.lb[-2] = -1
+        self.state_constraint.ub[-2] = 1  # maximum drive
+        self.state_constraint.lb[-1] = -0.384
+        self.state_constraint.ub[-1] = 0.384  # max steering angle (radians)
+
     def _dynamics(self, x0: np.ndarray, p: np.ndarray) -> np.ndarray:
 
         assert x0.shape == (self.n, 1), "Current state vector ∈ {}".format(x0.shape)  # sanity check
         assert p.shape == (self.m, 1), "Control vector ∈ {}".format(p.shape)  # sanity check
 
         lr= self.params.axis_rear
+        
+        if self.nsteps % 20 == 0:
+            # update system matrices: https://arxiv.org/pdf/1805.08551
+            ψ0 = x0[2, 0]
+            v0 = x0[3, 0]
+            β0 = x0[5, 0]
 
-        # update system matrices: https://arxiv.org/pdf/1805.08551
-        ψ0 = x0[2, 0]
-        v0 = x0[3, 0]
-        β0 = x0[5, 0]
+            self.B[0, 1] = -v0*self.Ts*np.sin(ψ0 + β0)
+            self.B[1, 1] = v0*self.Ts*np.cos(ψ0 + β0)
+            self.B[2, 1] = (v0 / lr) * np.cos(β0) * self.Ts
 
-        self.B[0, 1] = -v0*self.Ts*np.sin(ψ0 + β0)
-        self.B[1, 1] = v0*self.Ts*np.cos(ψ0 + β0)
-        self.B[2, 1] = (v0 / lr) * np.cos(β0) * self.Ts
-
-        self.K[0, 0] = v0*self.Ts*np.cos(ψ0 + β0)
-        self.K[1, 0] = v0*self.Ts*np.sin(ψ0 + β0)
-        self.K[2, 0] = (v0 / lr) * np.sin(β0) * self.Ts
+            self.K[0, 0] = v0*self.Ts*np.cos(ψ0 + β0)
+            self.K[1, 0] = v0*self.Ts*np.sin(ψ0 + β0)
+            self.K[2, 0] = (v0 / lr) * np.sin(β0) * self.Ts
 
         x_next = self.A@x0 + self.B@p + self.K
+
+        self.nsteps += 1
 
         assert x_next.shape == (self.n, 1), "New state vector ∈ {}".format(x_next.shape)  # sanity check
 
@@ -355,19 +370,20 @@ class LTVKineBicycle(LinearSystem):
                         states: list,
                         trim_exci: bool = False,
                         **pltargs):
+        x = self.get_x()
         y = self.get_y()
 
         super().plot_phasespace(axis=axis, states=states,
                                 trim_exci=trim_exci,
-                                colormap=y[:, 3, 0],
+                                colormap=x[:, 3, 0],
                                 **pltargs)
 
         l = 0.17
         w = 0.5 * l
 
         for i in range(0, self.n_steps, 20):
-            vehicle = Rectangle(y[i, :2, :] - np.array([[l/2], [w/2]]), l, w,
-                                angle=180*y[i, 2, :]/np.pi,
+            vehicle = Rectangle(x[i, :2, :] - np.array([[l/2], [w/2]]), l, w,
+                                angle=180*x[i, 2, :]/np.pi,
                                 rotation_point='center')
             axis.add_patch(vehicle)
 

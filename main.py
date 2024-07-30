@@ -259,36 +259,33 @@ def test_kine_bicycle():
     ax1, ax2 = setup_plot()
 
     Ts = 0.05
-    n_steps = 100
+    n_steps = 1000
     x = np.array([[0], [0], [0], [0], [0], [0]])
 
     vehicle = KineBicycle(x0=x, Ts=Ts)
-    u = np.vstack([0.05*np.ones(n_steps),
-                  [0.1*np.sin(0.5*np.pi*np.linspace(0, Ts*n_steps, n_steps))]]).T
+    u = np.vstack([0.01*np.ones(n_steps),
+                  [0.05*np.sin(0.5*np.pi*np.linspace(0, Ts*n_steps, n_steps))]]).T
 
     test_policy = OpenLoop.given_input_seq(vehicle, u)
 
     vehicle.simulate(n_steps=n_steps,
                      control_law=test_policy)
-    # vehicle.plot_trajectory(axis=ax1, states=[1])
+    # vehicle.plot_trajectory(axis=ax1, states=[3])
     vehicle.plot_phasespace(axis=ax1, states=[0, 1])
     vehicle.plot_control_input(axis=ax2)
 
-    plt.show()
+    # plt.show()
 
 def kine_bicycle_mpc():
-    Ts, n_steps = 0.05, 500
+    ax1, ax2 = setup_plot()
+    
+    Ts, n_steps = 0.05, 200
 
-    fig1 = plt.figure(figsize=(14, 6))
-    ax1 = fig1.add_subplot(1, 2, 1)
-    ax3 = fig1.add_subplot(1, 2, 2)
-    fig1.tight_layout()
-
-    ref = Track("track.svg", density=680)
+    ref = Track("track.svg", density=350)
     print(ref.traj.length())
     x0, y0 = ref.traj.point(0).real, np.imag(ref.traj.point(0))
 
-    x = np.array([[x0], [y0], [np.pi/2], [2], [0], [0]])
+    x = np.array([[x0], [y0], [0], [0], [0], [0]])
 
     vehicle = KineBicycle(x0=x, Ts=Ts)
 
@@ -296,19 +293,20 @@ def kine_bicycle_mpc():
     Q = np.diag([50, 50])
     R = np.diag([0.02, 5])
 
-    mpcc = MPFC(vehicle,
+    mpfc = MPFC(vehicle,
                 horizon=horizon,
                 Q=Q, R=R, Pf=2*Q)
-    mpcc.build()
+    mpfc.build()
 
     vehicle.simulate(n_steps=n_steps,
-                     control_law=mpcc,
+                     control_law=mpfc,
                      reference=ref)
     ref.plot_traj(axis=ax1)
     vehicle.plot_phasespace(axis=ax1, states=[0, 1])
-    vehicle.plot_trajectory(axis=ax3, states=[3])
+    # vehicle.plot_trajectory(axis=ax2, states=[3])
+    vehicle.plot_control_input(axis=ax2)
 
-    plt.show()
+    # plt.show()
 
     return
 
@@ -392,31 +390,80 @@ def ltv_car_test():
     ax1, ax2 = setup_plot()
 
     Ts = 0.05
-    n_steps = 100
+    n_steps = 200
 
-    x = np.array([[0], [0], [0], [0], [0], [0]])
+    ref = Track("track.svg", density=700)
+    print(ref.traj.length())
+    x0, y0 = ref.traj.point(0).real, np.imag(ref.traj.point(0))
+
+    x = np.array([[x0], [y0], [0], [0], [0], [0]])
     vehicle = LTVKineBicycle(x0=x, Ts=Ts)
+    v_mpc = KineBicycle(x0=x, Ts=Ts)
 
-    δ = 0.1*np.sin(0.5*np.pi*np.linspace(0, Ts*n_steps, n_steps))
-    Δβ = np.arctan2(np.tan(δ), 2)
-    
-    u = np.vstack([0.05*np.ones(n_steps),
-                  Δβ]).T
+    horizon = 20
+    Q = np.diag([50, 50])
+    R = np.diag([0.02, 5])
 
-    test_policy = OpenLoop.given_input_seq(vehicle, u)
+    mpfc = MPFC(v_mpc,
+                horizon=horizon,
+                Q=Q, R=R, Pf=2*Q)
+    mpfc.build()
 
     vehicle.simulate(n_steps, 
-                     control_law=test_policy)
-
-    # vehicle.plot_trajectory(axis=ax1, states=[1])
+                     control_law=mpfc,
+                     reference=ref)
+    ref.plot_traj(axis=ax1)
+    # vehicle.plot_trajectory(axis=ax2, states=[3])
     vehicle.plot_phasespace(axis=ax1, states=[0, 1])
     vehicle.plot_control_input(axis=ax2)
     plt.show()
     
     return
+
+def ltv_car_dpc():
+    ax1, ax2 = setup_plot()
+
+    Ts = 0.05
+    n_steps = 100
+
+    ref = Track("track.svg", density=500)
+    x0, y0 = ref.traj.point(0).real, np.imag(ref.traj.point(0))
+
+    x = np.array([[x0], [y0], [0], [0], [0], [0]])
+    σx=np.diag([0, 0, 0, 0, 0, 0])
+    σy=np.diag([0, 0])
+    vehicle = LTVKineBicycle(x0=x, Ts=Ts, isNoisy=True, σ_x=σx, σ_y=σy)
+
+    horizon = 20
+    Q_pc = np.diag([50, 50])
+    R = np.diag([0.1, 1])
+    λ_s, λ_g = 2e3, 5e2
+
+    excitation = OpenLoop.rnd_input(vehicle, n_steps)
+    dpc = DeePC(vehicle, T_ini=4, horizon=horizon,
+                data_mat=SMStruct.HANKEL,
+                init_law=excitation,
+                λ_s=λ_s, λ_g=λ_g, Q=Q_pc, R=R)
     
+    # dpc.plot_data_mat_svd()
+    # dpc.plot_init_excitation()
+    
+    vehicle.rst(x)
+    vehicle.simulate(n_steps, 
+                     control_law=dpc,
+                     reference=ref)
+
+    ref.plot_traj(axis=ax1)
+    vehicle.plot_phasespace(axis=ax1, states=[0, 1])
+    vehicle.plot_control_input(axis=ax2)
+
+    plt.show()
+    
+    return
 
 if __name__ == "__main__":
-    test_kine_bicycle()
-    ltv_car_test()
-    
+    # test_kine_bicycle()
+    # kine_bicycle_mpc()
+    # ltv_car_test()
+    # linear_car_dpc()
+    ltv_car_dpc()

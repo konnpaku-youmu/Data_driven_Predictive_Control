@@ -198,6 +198,7 @@ class DeePC(Controller):
     def __call__(self, x: np.ndarray, r: np.ndarray) -> np.ndarray:
 
         y_ini, u_ini = self.__build_ini_traj()
+        U_p, U_f, Y_p, Y_f = self.__update_data_mat()
 
         self.param_val['u_ini'] = vertsplit(u_ini)
         self.param_val['y_ini'] = vertsplit(y_ini)
@@ -237,6 +238,16 @@ class DeePC(Controller):
         u_ini = u_ini.squeeze()
 
         return y_ini, u_ini
+
+    def __update_data_mat(self):
+        _y = self.model.get_y()[-self.init_len:]
+        _u = self.model.get_u()[-self.init_len:]
+
+        assert _y.shape[0] == _u.shape[0], "Input/Output length mismatch"
+        
+        U_p, U_f = ..., ...
+        Y_p, Y_f = ..., ...
+        return U_p, U_f, Y_p, Y_f
 
     def get_total_loss(self):
         return np.sum(np.array(self.objective))

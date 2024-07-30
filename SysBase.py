@@ -117,7 +117,7 @@ class System:
 
     def _control_noise(self) -> np.ndarray:
         mean = np.zeros(self.m)
-        σ = np.diag([0.01])
+        σ = np.diag([0.005, 0.005])
         return np.random.multivariate_normal(mean, σ, size=[1]).T
 
     def _process_noise(self) -> np.ndarray:
@@ -176,7 +176,7 @@ class System:
         for k in track(range(n_steps), description="Simulation ...", total=n_steps):
             x_hat = observer(self.__y[-1])
             uk, u_pred = control_law(x_hat, reference())
-            # uk += self._control_noise()
+            uk += self._control_noise()
             x_next = self._f(x0=self.__x[-1], p=uk) + self._process_noise()
             yk = self._output(x_next, uk) + self._measurement_noise()
 
