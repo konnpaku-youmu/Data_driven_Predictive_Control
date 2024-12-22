@@ -117,7 +117,7 @@ class System:
 
     def _control_noise(self) -> np.ndarray:
         mean = np.zeros(self.m)
-        σ = np.diag([0.005, 0.005])
+        σ = np.diag([0.01, 0.01])
         return np.random.multivariate_normal(mean, σ, size=[1]).T
 
     def _process_noise(self) -> np.ndarray:

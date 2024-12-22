@@ -279,9 +279,9 @@ def test_kine_bicycle():
 def kine_bicycle_mpc():
     ax1, ax2 = setup_plot()
     
-    Ts, n_steps = 0.05, 200
+    Ts, n_steps = 0.05, 400
 
-    ref = Track("track.svg", density=350)
+    ref = Track("track.svg", density=500)
     print(ref.traj.length())
     x0, y0 = ref.traj.point(0).real, np.imag(ref.traj.point(0))
 
@@ -306,7 +306,7 @@ def kine_bicycle_mpc():
     # vehicle.plot_trajectory(axis=ax2, states=[3])
     vehicle.plot_control_input(axis=ax2)
 
-    # plt.show()
+    plt.show()
 
     return
 
@@ -315,18 +315,18 @@ def racing_car():
     ax1, ax2 = setup_plot()
 
     Ts = 0.05
-    n_steps = 100
+    n_steps = 300
 
-    ref = Track("track.svg", density=150)
+    ref = Track("track.svg", density=350)
     x0, y0 = ref.traj.point(0).real, np.imag(ref.traj.point(0))
     dxdy = ref.traj.derivative(0)
     ψ0 = np.arctan2(dxdy.imag, dxdy.real)
     
-    x = np.array([[x0], [y0], [ψ0], [0], [0], [0], [0], [0]])
+    x = np.array([[x0], [y0], [ψ0], [1], [0], [0], [0], [0]])
     vehicle = RacingCar(x0=x, Ts=Ts)
 
     horizon = 20
-    Q = np.diag([25, 25])
+    Q = np.diag([15, 15])
     R = np.diag([1, 5])
 
     mpfc = MPFC(vehicle,
@@ -464,6 +464,7 @@ def ltv_car_dpc():
 if __name__ == "__main__":
     # test_kine_bicycle()
     # kine_bicycle_mpc()
+    racing_car()
     # ltv_car_test()
     # linear_car_dpc()
-    ltv_car_dpc()
+    # ltv_car_dpc()
